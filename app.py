@@ -190,68 +190,144 @@ with tabs[0]:
             else:
                 st.info("Tidak ada saham yang memenuhi kriteria")
 
-# ==================== TAB 2: DEEP DIVE & KSEI ====================
+# ==================== TAB 2: DEEP DIVE & KSEI (VERSI BROKER REVEAL) ====================
 with tabs[1]:
-    st.markdown("### 🔍 Deep Dive & KSEI 5% Analysis")
+    st.markdown("### 🔍 Deep Dive: Price vs Broker Accumulation")
+    st.caption("Melihat korelasi pergerakan harga dengan akumulasi broker spesifik (pemegang >5%).")
     
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col1: selected_stock = st.selectbox("Pilih Saham", unique_stocks, key='dive_stock')
-    with col2: period = st.selectbox("Rentang Hari", [14, 30, 60, 90, 180, 365], index=3)
-    with col3: vs_tradeble = st.checkbox("Normalize to Tradeble", value=True)
+    col_sel1, col_sel2 = st.columns([1, 3])
+    with col_sel1:
+        selected_stock = st.selectbox("Pilih Saham", unique_stocks, key='dd_stock')
+        period_days = st.selectbox("Rentang Waktu", [30, 60, 90, 180, 365], index=2, key='dd_period')
     
-    start_dive = max_date - timedelta(days=period)
+    start_dive = max_date - timedelta(days=period_days)
+    
+    # Filter Data
     df_dive = df_transaksi[(df_transaksi['Stock Code'] == selected_stock) & (df_transaksi['Last Trading Date'].dt.date >= start_dive)].copy().sort_values('Last Trading Date')
     ksei_dive = df_kepemilikan[(df_kepemilikan['Kode Efek'] == selected_stock) & (df_kepemilikan['Tanggal_Data'].dt.date >= start_dive)].copy()
     
-    if len(df_dive) > 0:
+    if not df_dive.empty:
         latest = df_dive.iloc[-1]
-        tradeble = latest['Tradeble Shares'] if vs_tradeble and latest['Tradeble Shares'] > 0 else 1
         
-        # METRICS
-        cols = st.columns(6)
-        cols[0].metric("Harga Terakhir", f"Rp {latest['Close']:,.0f}", f"{latest['Change %']:.1f}%")
-        cols[1].metric("Vol % Tradeble", f"{(latest['Volume']/tradeble*100):.2f}%" if tradeble>0 else "0%")
-        cols[2].metric("Net Foreign Flow", format_rupiah(latest['Net Foreign Flow']))
-        cols[3].metric("AOV Anomali", f"{latest['Big_Player_Anomaly']:.1f}x")
-        cols[4].metric("Avg Order Vol", f"{latest['Avg_Order_Volume']:,.0f}")
-        cols[5].metric("Value Spike", f"{latest['Volume Spike (x)']:.1f}x")
+        # Metrics Row
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Harga Terakhir", f"Rp {latest['Close']:,.0f}", f"{latest['Change %']:.2f}%")
+        m2.metric("Total Value", format_rupiah(latest['Value']))
+        m3.metric("Net Foreign", format_rupiah(latest['Net Foreign Flow']))
+        anomali_color = "normal" if latest['Big_Player_Anomaly'] < 2 else "inverse"
+        m4.metric("Anomali AOV", f"{latest['Big_Player_Anomaly']:.1f}x", delta="Spike" if latest['Big_Player_Anomaly']>3 else None, delta_color=anomali_color)
         
-        # IMPROVEMENT: DUAL AXIS KSEI VS PRICE CHART
-        st.markdown(f"#### 📊 Overlay Kepemilikan 5% KSEI vs Harga ({selected_stock})")
-        
+        st.divider()
+
+        # --- FITUR UTAMA: CHART HARGA VS KEPEMILIKAN PER BROKER ---
         if not ksei_dive.empty:
-            ksei_agg = ksei_dive.groupby('Tanggal_Data')['Jumlah Saham (Curr)'].sum().reset_index()
-            merged_ksei = pd.merge(ksei_agg, df_dive[['Last Trading Date', 'Close']], left_on='Tanggal_Data', right_on='Last Trading Date', how='right')
-            # Forward fill untuk data KSEI yang kosong di hari tertentu
-            merged_ksei['Jumlah Saham (Curr)'] = merged_ksei['Jumlah Saham (Curr)'].ffill()
+            # 1. Siapkan Data KSEI (Group by Tanggal & Broker agar bisa di-stack)
+            # Kita gunakan Kode Broker sebagai pembeda warna. Jika kosong, pakai Nama Pemegang Saham.
+            ksei_dive['Identity'] = ksei_dive['Kode Broker'].fillna(ksei_dive['Nama Pemegang Saham'].str[:15])
             
-            fig_ksei = go.Figure()
-            fig_ksei.add_trace(go.Bar(x=merged_ksei['Last Trading Date'], y=merged_ksei['Jumlah Saham (Curr)'], name="Total Saham UBO 5%", marker_color='#3498DB', opacity=0.6, yaxis="y"))
-            fig_ksei.add_trace(go.Scatter(x=merged_ksei['Last Trading Date'], y=merged_ksei['Close'], name="Harga Close", mode='lines+markers', line=dict(color='#E74C3C', width=3), yaxis="y2"))
+            # Aggregate per tanggal dan identitas broker
+            ksei_stack = ksei_dive.groupby(['Tanggal_Data', 'Identity', 'Nama Pemegang Saham'])['Jumlah Saham (Curr)'].sum().reset_index()
             
-            fig_ksei.update_layout(
-                height=450, hovermode='x unified', legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5),
-                yaxis=dict(title="Jumlah Saham (Lembar)", gridcolor='lightgray'),
-                yaxis2=dict(title="Harga (Rp)", overlaying='y', side='right', showgrid=False),
-                margin=dict(l=40, r=40, t=20, b=20), plot_bgcolor='white'
+            # Buat Base Chart (Stacked Bar untuk Broker)
+            fig = px.bar(
+                ksei_stack, 
+                x='Tanggal_Data', 
+                y='Jumlah Saham (Curr)', 
+                color='Identity', # Ini kuncinya: Warna beda tiap broker
+                title=f"Peta Penguasaan Broker di {selected_stock}",
+                labels={'Jumlah Saham (Curr)': 'Lembar Saham', 'Identity': 'Kode Broker'},
+                hover_data={'Nama Pemegang Saham': True, 'Jumlah Saham (Curr)': ':,.0f'}
             )
-            st.plotly_chart(fig_ksei, use_container_width=True)
+
+            # Tambahkan Garis Harga (Dual Axis)
+            # Kita perlu trace harga dari dataframe transaksi
+            fig.add_trace(
+                go.Scatter(
+                    x=df_dive['Last Trading Date'],
+                    y=df_dive['Close'],
+                    name="Harga Saham",
+                    line=dict(color='red', width=3),
+                    mode='lines'
+                )
+            )
+
+            # Update Layout untuk Dual Axis manual di Plotly Express
+            fig.update_traces(yaxis="y2", selector=dict(type='scatter')) # Set garis harga ke sumbu kanan
+            
+            fig.update_layout(
+                height=600,
+                hovermode="x unified",
+                legend=dict(orientation="h", y=1.1, title_text="Broker / Holder"),
+                yaxis=dict(
+                    title="Total Lembar Saham (Stack per Broker)",
+                    side="left",
+                    showgrid=False
+                ),
+                yaxis2=dict(
+                    title="Harga Saham (Rp)",
+                    side="right",
+                    overlaying="y",
+                    showgrid=True,
+                    gridcolor='lightgray'
+                ),
+                xaxis=dict(title="Tanggal")
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # --- TABEL RINGKASAN AKUMULASI/DISTRIBUSI PER BROKER (DI BAWAH CHART) ---
+            st.markdown("#### 📊 Siapa yang Akumulasi & Distribusi?")
+            
+            # Hitung selisih Awal vs Akhir periode per Broker
+            first_date = ksei_dive['Tanggal_Data'].min()
+            last_date = ksei_dive['Tanggal_Data'].max()
+            
+            start_holdings = ksei_dive[ksei_dive['Tanggal_Data'] == first_date].groupby(['Kode Broker', 'Nama Pemegang Saham'])['Jumlah Saham (Curr)'].sum().reset_index().rename(columns={'Jumlah Saham (Curr)': 'Awal'})
+            end_holdings = ksei_dive[ksei_dive['Tanggal_Data'] == last_date].groupby(['Kode Broker', 'Nama Pemegang Saham'])['Jumlah Saham (Curr)'].sum().reset_index().rename(columns={'Jumlah Saham (Curr)': 'Akhir'})
+            
+            # Gabung data awal dan akhir
+            mutation = pd.merge(start_holdings, end_holdings, on=['Kode Broker', 'Nama Pemegang Saham'], how='outer').fillna(0)
+            mutation['Net Change'] = mutation['Akhir'] - mutation['Awal']
+            mutation['Status'] = np.where(mutation['Net Change'] > 0, 'Akumulasi', np.where(mutation['Net Change'] < 0, 'Distribusi', 'Hold'))
+            
+            # Filter yang ada pergerakan saja & sort
+            active_movers = mutation[mutation['Net Change'] != 0].sort_values('Net Change', ascending=False)
+            
+            if not active_movers.empty:
+                # Format tampilan
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**🟢 Top Accumulators**")
+                    top_acc = active_movers[active_movers['Net Change'] > 0].head(10)
+                    st.dataframe(
+                        top_acc[['Kode Broker', 'Nama Pemegang Saham', 'Net Change']],
+                        column_config={
+                            "Net Change": st.column_config.NumberColumn("Beli Bersih (Lembar)", format="+%d")
+                        },
+                        hide_index=True, use_container_width=True
+                    )
+                
+                with col2:
+                    st.markdown("**🔴 Top Distributors**")
+                    top_dist = active_movers[active_movers['Net Change'] < 0].sort_values('Net Change', ascending=True).head(10)
+                    st.dataframe(
+                        top_dist[['Kode Broker', 'Nama Pemegang Saham', 'Net Change']],
+                        column_config={
+                            "Net Change": st.column_config.NumberColumn("Jual Bersih (Lembar)", format="%d")
+                        },
+                        hide_index=True, use_container_width=True
+                    )
+            else:
+                st.info("Tidak ada perubahan kepemilikan >5% yang signifikan pada periode ini.")
+                
         else:
-            st.warning(f"Belum ada entitas yang memiliki >5% saham di {selected_stock} pada periode ini.")
-        
-        # Technical Subplots
-        st.markdown("#### 📈 Price Action & Anomaly Indicators")
-        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.5, 0.25, 0.25])
-        
-        # Candlestick
-        fig.add_trace(go.Candlestick(x=df_dive['Last Trading Date'], open=df_dive['Open Price'], high=df_dive['High'], low=df_dive['Low'], close=df_dive['Close'], name="Price"), row=1, col=1)
-        # Foreign Flow
-        fig.add_trace(go.Bar(x=df_dive['Last Trading Date'], y=df_dive['Net Foreign Flow']/1e9, name="Net Foreign (M)", marker_color=['green' if x > 0 else 'red' for x in df_dive['Net Foreign Flow']]), row=2, col=1)
-        # Anomaly
-        fig.add_trace(go.Scatter(x=df_dive['Last Trading Date'], y=df_dive['Big_Player_Anomaly'], name="Anomaly AOV", line=dict(color='purple', width=2), fill='tozeroy'), row=3, col=1)
-        
-        fig.update_layout(height=600, xaxis_rangeslider_visible=False, margin=dict(l=20, r=20, t=20, b=20), hovermode='x unified')
-        st.plotly_chart(fig, use_container_width=True)
+            st.warning("Data KSEI tidak tersedia untuk saham ini di periode yang dipilih.")
+            # Fallback ke chart harga biasa
+            fig = px.line(df_dive, x='Last Trading Date', y='Close', title="Chart Harga (Tanpa Data KSEI)")
+            st.plotly_chart(fig, use_container_width=True)
+
+    else:
+        st.error("Data transaksi tidak ditemukan.")
 
 # ==================== TAB 3: BROKER MUTASI ====================
 with tabs[2]:
