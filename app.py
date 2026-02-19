@@ -171,7 +171,7 @@ with tabs[0]:
             st.markdown(f"**Menampilkan Top {len(summary)} Saham (Diurutkan berdasarkan Bandar Score)**")
             
             if len(summary) > 0:
-                # PERBAIKAN: Konversi numpy values ke Python native untuk ProgressColumn
+                # Konversi numpy values ke Python native untuk ProgressColumn
                 max_vol_pct = float(summary['Volume_Pct_Tradeble'].max()) if len(summary) > 0 else 1.0
                 if max_vol_pct <= 0:
                     max_vol_pct = 1.0
@@ -507,12 +507,19 @@ with tabs[3]:
                     height=500
                 )
         
-        # Visualisasi tambahan
+        # Visualisasi tambahan - PERBAIKAN: Buat kolom absolute value
         st.divider()
         st.markdown("#### 📊 Foreign Flow Distribution")
         
-        fig = px.scatter(ff_data.head(50), x='Value', y='Net Foreign Flow',
-                        text='Stock Code', size='abs(Net Foreign Flow)',
+        # Buat copy dataframe untuk visualisasi
+        ff_viz = ff_data.head(50).copy()
+        
+        # Buat kolom absolute value
+        ff_viz['Abs_Net_Foreign'] = abs(ff_viz['Net Foreign Flow'])
+        
+        # Buat scatter plot dengan kolom yang sudah dibuat
+        fig = px.scatter(ff_viz, x='Value', y='Net Foreign Flow',
+                        text='Stock Code', size='Abs_Net_Foreign',
                         color='Net Foreign Flow', color_continuous_scale='RdYlGn',
                         title=f"Foreign Flow Map ({ff_period})")
         fig.update_traces(textposition='top center')
