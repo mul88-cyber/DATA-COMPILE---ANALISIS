@@ -48,7 +48,6 @@ st.markdown("""
 @st.cache_data(ttl=3600)
 def load_data():
     try:
-        # Ganti dengan st.secrets Anda di production
         gcp_service_account = st.secrets["gcp_service_account"]
         credentials = service_account.Credentials.from_service_account_info(
             gcp_service_account, scopes=['https://www.googleapis.com/auth/drive.readonly']
@@ -171,12 +170,10 @@ with tabs[0]:
             st.markdown(f"**Menampilkan Top {len(summary)} Saham (Diurutkan berdasarkan Bandar Score)**")
             
             if len(summary) > 0:
-                # Konversi numpy values ke Python native untuk ProgressColumn
                 max_vol_pct = float(summary['Volume_Pct_Tradeble'].max()) if len(summary) > 0 else 1.0
                 if max_vol_pct <= 0:
                     max_vol_pct = 1.0
                 
-                # Siapkan dataframe untuk display
                 display_df = summary[['Stock Code', 'Close', 'Change %', 'Value', 'Net Foreign Flow', 
                                       'Volume_Pct_Tradeble', 'Big_Player_Anomaly', 'Inst_Score']].copy()
                 
@@ -206,7 +203,7 @@ with tabs[0]:
         else:
             st.info("Data tidak ditemukan untuk periode ini.")
 
-# ==================== TAB 2: DEEP DIVE & CHART ====================
+# ==================== TAB 2: DEEP DIVE & CHART (FIXED) ====================
 with tabs[1]:
     st.markdown("### 🔍 Deep Dive: Multi-Timeframe Analytics")
     
@@ -237,6 +234,7 @@ with tabs[1]:
                 'Volume Spike (x)': 'max'
             }).dropna().reset_index()
         else:
+            # Untuk Daily, kita tetap pakai data asli
             df_resampled = df_dive.copy()
 
         # Potong sesuai panjang chart
@@ -276,24 +274,57 @@ with tabs[1]:
 
         st.divider()
 
-        # --- ADVANCED CHART ---
+        # --- ADVANCED CHART DENGAN PERBAIKAN HOLE ---
         fig = make_subplots(
-            rows=2, cols=1, 
+            rows=3, cols=1, 
             shared_xaxes=True, 
-            vertical_spacing=0.03, 
-            row_heights=[0.7, 0.3],
-            subplot_titles=(f"Price Action ({interval})", "Net Foreign Flow")
+            vertical_spacing=0.05, 
+            row_heights=[0.5, 0.25, 0.25],
+            subplot_titles=(f"Price Action ({interval})", "Volume Analysis", "Net Foreign Flow")
         )
 
-        # Candlestick
+        # 1. Candlestick dengan range break
         fig.add_trace(go.Candlestick(
             x=df_chart['Last Trading Date'],
-            open=df_chart['Open Price'], high=df_chart['High'],
-            low=df_chart['Low'], close=df_chart['Close'],
-            name="OHLC"
+            open=df_chart['Open Price'], 
+            high=df_chart['High'],
+            low=df_chart['Low'], 
+            close=df_chart['Close'],
+            name="OHLC",
+            showlegend=False
         ), row=1, col=1)
 
-        # Marker untuk Anomali
+        # Tambahkan line chart untuk mengisi visualisasi (opsional)
+        fig.add_trace(go.Scatter(
+            x=df_chart['Last Trading Date'],
+            y=df_chart['Close'],
+            mode='lines',
+            line=dict(color='blue', width=1),
+            name='Close Line',
+            showlegend=False
+        ), row=1, col=1)
+
+        # 2. Volume bars
+        colors_vol = ['red' if row['Close'] < row['Open Price'] else 'green' for _, row in df_chart.iterrows()]
+        fig.add_trace(go.Bar(
+            x=df_chart['Last Trading Date'],
+            y=df_chart['Volume'] / 1e6,  # Convert ke Juta
+            name="Volume (Jt)",
+            marker_color=colors_vol,
+            showlegend=False
+        ), row=2, col=1)
+
+        # 3. Foreign Flow Bar
+        colors_ff = ['green' if val >= 0 else 'red' for val in df_chart['Net Foreign Flow']]
+        fig.add_trace(go.Bar(
+            x=df_chart['Last Trading Date'],
+            y=df_chart['Net Foreign Flow'] / 1e9,  # Convert ke Miliar
+            name="Net Foreign (M)",
+            marker_color=colors_ff,
+            showlegend=False
+        ), row=3, col=1)
+
+        # Marker untuk Anomali (taruh di chart price)
         if 'Big_Player_Anomaly' in df_chart.columns:
             anomali_points = df_chart[df_chart['Big_Player_Anomaly'] > 3.0]
             if not anomali_points.empty:
@@ -301,30 +332,36 @@ with tabs[1]:
                     x=anomali_points['Last Trading Date'],
                     y=anomali_points['High'] * 1.02,
                     mode='markers',
-                    marker=dict(symbol='star', size=12, color='orange', line=dict(width=1, color='black')),
+                    marker=dict(symbol='star', size=10, color='orange', line=dict(width=1, color='black')),
                     name='High Anomaly'
                 ), row=1, col=1)
 
-        # Foreign Flow Bar
-        colors_ff = ['green' if val >= 0 else 'red' for val in df_chart['Net Foreign Flow']]
-        fig.add_trace(go.Bar(
-            x=df_chart['Last Trading Date'],
-            y=df_chart['Net Foreign Flow'] / 1e9,  # Convert ke Miliar
-            name="Net Foreign (M)",
-            marker_color=colors_ff
-        ), row=2, col=1)
-
+        # Update layout untuk menangani gap
         fig.update_layout(
-            height=700, 
-            hovermode="x unified", 
-            margin=dict(t=30, b=30, l=30, r=30),
+            height=800,
+            hovermode="x unified",
+            margin=dict(t=40, b=40, l=40, r=40),
             xaxis_rangeslider_visible=False,
-            showlegend=True
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
+        
+        # Atur rangebreaks untuk menghilangkan weekend gap
+        fig.update_xaxes(
+            rangebreaks=[
+                dict(bounds=["sat", "mon"]),  # skip weekend
+            ],
+            rangeslider_visible=False
+        )
+        
         fig.update_yaxes(title_text="Harga", row=1, col=1)
-        fig.update_yaxes(title_text="Foreign (M)", row=2, col=1)
+        fig.update_yaxes(title_text="Volume (Jt)", row=2, col=1)
+        fig.update_yaxes(title_text="Foreign (M)", row=3, col=1)
         
         st.plotly_chart(fig, use_container_width=True)
+
+        # Informasi tambahan tentang data
+        st.caption(f"📊 Menampilkan {len(df_chart)} hari data trading (weekend otomatis di-skip)")
 
         # --- RINGKASAN BROKER (KSEI) ---
         st.subheader("🕵️ Ringkasan Aktivitas Broker Owner (KSEI 5%)")
@@ -507,17 +544,13 @@ with tabs[3]:
                     height=500
                 )
         
-        # Visualisasi tambahan - PERBAIKAN: Buat kolom absolute value
+        # Visualisasi tambahan
         st.divider()
         st.markdown("#### 📊 Foreign Flow Distribution")
         
-        # Buat copy dataframe untuk visualisasi
         ff_viz = ff_data.head(50).copy()
-        
-        # Buat kolom absolute value
         ff_viz['Abs_Net_Foreign'] = abs(ff_viz['Net Foreign Flow'])
         
-        # Buat scatter plot dengan kolom yang sudah dibuat
         fig = px.scatter(ff_viz, x='Value', y='Net Foreign Flow',
                         text='Stock Code', size='Abs_Net_Foreign',
                         color='Net Foreign Flow', color_continuous_scale='RdYlGn',
