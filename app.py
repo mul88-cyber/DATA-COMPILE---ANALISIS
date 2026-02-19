@@ -24,14 +24,61 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main-header { background: linear-gradient(90deg, #000428, #004e92); padding: 1.5rem; border-radius: 12px; color: white; margin-bottom: 1.5rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .metric-card { background: white; padding: 1rem; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-left: 5px solid #004e92; }
-    .kpi-card { background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 15px; text-align: center; }
-    .kpi-value { font-size: 24px; font-weight: bold; color: #004e92; }
-    .kpi-label { font-size: 14px; color: #6c757d; }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; background-color: white; padding: 10px; border-radius: 10px; border: 1px solid #e2e8f0; }
-    .stTabs [data-baseweb="tab"] { border-radius: 5px; padding: 8px 16px; font-weight: 600; }
-    .filter-container { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 1rem; }
+    .main-header { 
+        background: linear-gradient(90deg, #000428, #004e92); 
+        padding: 1.5rem; 
+        border-radius: 12px; 
+        color: white; 
+        margin-bottom: 1.5rem; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+    }
+    .metric-card { 
+        background: white; 
+        padding: 1rem; 
+        border-radius: 10px; 
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05); 
+        border-left: 5px solid #004e92; 
+    }
+    .kpi-card { 
+        background-color: #f8f9fa; 
+        border: 1px solid #dee2e6; 
+        border-radius: 8px; 
+        padding: 15px; 
+        text-align: center; 
+    }
+    .kpi-value { 
+        font-size: 24px; 
+        font-weight: bold; 
+        color: #004e92; 
+    }
+    .kpi-label { 
+        font-size: 14px; 
+        color: #6c757d; 
+    }
+    .stTabs [data-baseweb="tab-list"] { 
+        gap: 10px; 
+        background-color: white; 
+        padding: 10px; 
+        border-radius: 10px; 
+        border: 1px solid #e2e8f0; 
+    }
+    .stTabs [data-baseweb="tab"] { 
+        border-radius: 5px; 
+        padding: 8px 16px; 
+        font-weight: 600; 
+    }
+    .filter-container { 
+        background: #f8f9fa; 
+        padding: 15px; 
+        border-radius: 10px; 
+        margin-bottom: 1rem; 
+        border: 1px solid #dee2e6;
+    }
+    .big-number {
+        font-size: 1.2rem;
+        font-weight: 600;
+        color: #004e92;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -102,6 +149,11 @@ if 'Tradeble Shares' in df_transaksi.columns:
 else:
     df_transaksi['Volume_Pct_Tradeble'] = 0
 
+# Hitung AOVol Spike (jika belum ada)
+if 'AOVol_Spike' not in df_transaksi.columns and 'Avg_Order_Volume' in df_transaksi.columns:
+    df_transaksi['AOVol_Spike'] = df_transaksi['Avg_Order_Volume'] / df_transaksi['Avg_Order_Volume'].rolling(20, min_periods=1).mean()
+    df_transaksi['AOVol_Spike'] = df_transaksi['AOVol_Spike'].fillna(1)
+
 unique_stocks = sorted(df_transaksi['Stock Code'].unique())
 max_date = df_transaksi['Last Trading Date'].max().date()
 default_start = max_date - timedelta(days=30)
@@ -118,130 +170,227 @@ tabs = st.tabs([
     "🗺️ MARKET MAP"
 ])
 
-# ==================== TAB 1: SCREENER PRO ====================
+# ==================== TAB 1: SCREENER PRO (LENGKAP) ====================
 with tabs[0]:
     st.markdown("### 🎯 Screener Pro - Institutional Activity")
     
     with st.container():
         st.markdown('<div class="filter-container">', unsafe_allow_html=True)
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: 
-            min_value = st.number_input("Min Transaksi (Miliar)", 0, 1000, 10, key='s_val') * 1e9
-        with c2: 
-            min_anomali = st.slider("Min Anomali AOV (x)", 0, 20, 2, key='s_anom')
-        with c3: 
-            foreign_filter = st.selectbox("Foreign Flow", ["Semua", "Net Buy", "Net Sell"], key='s_ff')
-        with c4: 
-            date_range = st.date_input("Periode Agregasi", value=(default_start, max_date), key='s_date')
+        
+        # Row 1 - Filter Utama
+        r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+        with r1c1:
+            min_value = st.number_input("Min Nilai Transaksi (M)", 0, 10000, 10) * 1e9
+        with r1c2:
+            min_volume = st.number_input("Min Volume (Juta)", 0, 10000, 100) * 1e6
+        with r1c3:
+            min_anomali = st.slider("Min Big Player Anomali (x)", 0, 20, 3)
+        with r1c4:
+            min_spike = st.slider("Min Volume Spike (x)", 0.0, 5.0, 1.5, 0.1)
+        
+        # Row 2 - Filter Foreign & Periode
+        r2c1, r2c2, r2c3, r2c4 = st.columns(4)
+        with r2c1:
+            foreign_filter = st.selectbox("Foreign Flow", ["Semua", "Net Buy", "Net Sell", "Net Buy > 10M", "Net Sell > 10M"])
+        with r2c2:
+            min_vol_pct = st.slider("Min Volume % Tradeble", 0.0, 10.0, 0.5, 0.1)
+        with r2c3:
+            min_price = st.number_input("Min Harga", 0, 100000, 50)
+        with r2c4:
+            date_range = st.date_input("Periode Analisis", value=(default_start, max_date))
+        
+        # Row 3 - Filter Tambahan
+        r3c1, r3c2, r3c3, r3c4 = st.columns(4)
+        with r3c1:
+            min_aoVol = st.slider("Min AOVol Spike", 0.0, 5.0, 1.5, 0.1)
+        with r3c2:
+            top_only = st.checkbox("Hanya Top 100", value=True)
+        with r3c3:
+            sort_by = st.selectbox("Urutkan Berdasarkan", 
+                                  ["Inst Score", "Anomali", "Volume %", "Foreign Flow", "Nilai"])
+        with r3c4:
+            st.markdown("<br>", unsafe_allow_html=True)
+            show_details = st.checkbox("Tampilkan Semua Kolom", value=False)
+        
         st.markdown('</div>', unsafe_allow_html=True)
     
     if len(date_range) == 2:
         start_date, end_date = date_range
-        mask = (df_transaksi['Last Trading Date'].dt.date >= start_date) & (df_transaksi['Last Trading Date'].dt.date <= end_date)
+        mask = (df_transaksi['Last Trading Date'].dt.date >= start_date) & \
+               (df_transaksi['Last Trading Date'].dt.date <= end_date)
         df_filter = df_transaksi[mask].copy()
         
         if not df_filter.empty:
-            # Agregasi
+            # Agregasi lengkap
             summary = df_filter.groupby('Stock Code').agg({
-                'Close': 'last', 
-                'Change %': 'mean', 
-                'Value': 'sum', 
-                'Net Foreign Flow': 'sum', 
-                'Big_Player_Anomaly': 'max', 
-                'Volume Spike (x)': 'max', 
-                'Volume_Pct_Tradeble': 'mean'
+                'Close': 'last',
+                'Change %': 'mean',
+                'Volume': 'sum',
+                'Value': 'sum',
+                'Net Foreign Flow': 'sum',
+                'Big_Player_Anomaly': 'max',
+                'Volume Spike (x)': 'max',
+                'Volume_Pct_Tradeble': 'mean',
+                'Avg_Order_Volume': 'mean',
+                'Tradeble Shares': 'last',
+                'Free Float': 'last'
             }).reset_index()
             
             # Hitung metrik tambahan
-            summary['Pressure'] = np.where(summary['Value'] > 0, (summary['Net Foreign Flow'] / summary['Value'] * 100), 0)
-            summary['Inst_Score'] = (summary['Volume_Pct_Tradeble'] * 0.4) + (summary['Big_Player_Anomaly'] * 0.3) + (abs(summary['Pressure']) * 0.3)
+            summary['Pressure'] = np.where(summary['Value'] > 0, 
+                                          (summary['Net Foreign Flow'] / summary['Value'] * 100), 0)
+            summary['AOVol_Spike'] = summary['Avg_Order_Volume'] / summary['Avg_Order_Volume'].mean()
+            summary['Inst_Score'] = (
+                summary['Volume_Pct_Tradeble'] * 0.3 + 
+                summary['Big_Player_Anomaly'] * 0.3 + 
+                abs(summary['Pressure']) * 0.2 +
+                summary['AOVol_Spike'] * 0.2
+            )
             
-            # Filter
+            # Apply filters
             summary = summary[summary['Value'] >= min_value]
+            summary = summary[summary['Volume'] >= min_volume]
             summary = summary[summary['Big_Player_Anomaly'] >= min_anomali]
+            summary = summary[summary['Volume Spike (x)'] >= min_spike]
+            summary = summary[summary['Volume_Pct_Tradeble'] >= min_vol_pct]
+            summary = summary[summary['Close'] >= min_price]
             
-            if foreign_filter == "Net Buy": 
+            if 'AOVol_Spike' in summary.columns:
+                summary = summary[summary['AOVol_Spike'] >= min_aoVol]
+            
+            # Foreign filters
+            if foreign_filter == "Net Buy":
                 summary = summary[summary['Net Foreign Flow'] > 0]
-            elif foreign_filter == "Net Sell": 
+            elif foreign_filter == "Net Sell":
                 summary = summary[summary['Net Foreign Flow'] < 0]
+            elif foreign_filter == "Net Buy > 10M":
+                summary = summary[summary['Net Foreign Flow'] > 10e9]
+            elif foreign_filter == "Net Sell > 10M":
+                summary = summary[summary['Net Foreign Flow'] < -10e9]
             
-            summary = summary.sort_values('Inst_Score', ascending=False).head(100)
+            # Sorting
+            sort_map = {
+                "Inst Score": "Inst_Score",
+                "Anomali": "Big_Player_Anomaly",
+                "Volume %": "Volume_Pct_Tradeble",
+                "Foreign Flow": "Net Foreign Flow",
+                "Nilai": "Value"
+            }
+            summary = summary.sort_values(sort_map[sort_by], ascending=False)
             
-            st.markdown(f"**Menampilkan Top {len(summary)} Saham (Diurutkan berdasarkan Bandar Score)**")
+            if top_only:
+                summary = summary.head(100)
+            
+            st.markdown(f"**🎯 Ditemukan {len(summary)} saham dengan kriteria terpilih**")
             
             if len(summary) > 0:
-                max_vol_pct = float(summary['Volume_Pct_Tradeble'].max()) if len(summary) > 0 else 1.0
-                if max_vol_pct <= 0:
-                    max_vol_pct = 1.0
+                # Format display
+                if show_details:
+                    display_cols = ['Stock Code', 'Close', 'Change %', 'Value', 'Volume', 
+                                   'Net Foreign Flow', 'Volume_Pct_Tradeble', 'Big_Player_Anomaly',
+                                   'Volume Spike (x)', 'AOVol_Spike', 'Pressure', 'Inst_Score']
+                else:
+                    display_cols = ['Stock Code', 'Close', 'Change %', 'Value', 'Net Foreign Flow',
+                                   'Volume_Pct_Tradeble', 'Big_Player_Anomaly', 'Inst_Score']
                 
-                display_df = summary[['Stock Code', 'Close', 'Change %', 'Value', 'Net Foreign Flow', 
-                                      'Volume_Pct_Tradeble', 'Big_Player_Anomaly', 'Inst_Score']].copy()
+                available_cols = [c for c in display_cols if c in summary.columns]
+                display_df = summary[available_cols].copy()
                 
-                st.dataframe(
-                    display_df,
-                    use_container_width=True,
-                    height=600,
-                    column_config={
-                        "Stock Code": st.column_config.TextColumn("Kode", width="small"),
-                        "Close": st.column_config.NumberColumn("Harga", format="Rp %,.0f"),
-                        "Change %": st.column_config.NumberColumn("Avg Chg%", format="%.2f%%"),
-                        "Value": st.column_config.NumberColumn("Total Value", format="Rp %,.0f"),
-                        "Net Foreign Flow": st.column_config.NumberColumn("Net Foreign", format="Rp %,.0f"),
-                        "Volume_Pct_Tradeble": st.column_config.ProgressColumn(
-                            "Vol % Tradeble", 
-                            format="%.2f%%", 
-                            min_value=0.0, 
-                            max_value=max_vol_pct
-                        ),
-                        "Big_Player_Anomaly": st.column_config.NumberColumn("Max Anomali (x)", format="%.1f"),
-                        "Inst_Score": st.column_config.NumberColumn("Score", format="%.1f")
-                    },
-                    hide_index=True
-                )
+                # Format numbers with thousand separators
+                for col in display_df.columns:
+                    if col in ['Value', 'Net Foreign Flow', 'Volume']:
+                        display_df[col] = display_df[col].apply(lambda x: f"Rp {x:,.0f}")
+                    elif col == 'Close':
+                        display_df[col] = display_df[col].apply(lambda x: f"Rp {x:,.0f}")
+                    elif col == 'Change %':
+                        display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}%")
+                    elif col in ['Volume_Pct_Tradeble', 'Pressure']:
+                        display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}%")
+                    elif col in ['Big_Player_Anomaly', 'Volume Spike (x)', 'AOVol_Spike', 'Inst_Score']:
+                        display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}x")
+                
+                # Rename columns
+                col_names = {
+                    'Stock Code': 'Kode',
+                    'Close': 'Harga',
+                    'Change %': 'Change',
+                    'Value': 'Nilai',
+                    'Volume': 'Volume',
+                    'Net Foreign Flow': 'Foreign',
+                    'Volume_Pct_Tradeble': 'Vol%Trade',
+                    'Big_Player_Anomaly': 'Anomali',
+                    'Volume Spike (x)': 'Spike',
+                    'AOVol_Spike': 'AOVol',
+                    'Pressure': 'Tekanan',
+                    'Inst_Score': 'Score'
+                }
+                display_df = display_df.rename(columns={k: v for k, v in col_names.items() if k in display_df.columns})
+                
+                st.dataframe(display_df, use_container_width=True, height=500)
+                
+                # Visualisasi
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    fig = px.scatter(summary.head(30), x='Volume_Pct_Tradeble', y='Net Foreign Flow',
+                                   size='Inst_Score', color='Change %',
+                                   hover_data=['Stock Code'],
+                                   title="Volume Concentration vs Foreign Flow",
+                                   color_continuous_scale='RdYlGn')
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    top_potential = summary.nlargest(15, 'Inst_Score')[['Stock Code', 'Inst_Score']]
+                    fig = px.bar(top_potential, x='Stock Code', y='Inst_Score',
+                               title="Top 15 Institutional Score",
+                               color='Inst_Score', color_continuous_scale='Viridis')
+                    fig.update_layout(height=400)
+                    st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("Tidak ada saham yang memenuhi kriteria")
         else:
-            st.info("Data tidak ditemukan untuk periode ini.")
+            st.info("Tidak ada data untuk periode ini")
 
-# ==================== TAB 2: DEEP DIVE & CHART (FIXED) ====================
+# ==================== TAB 2: DEEP DIVE & CHART (DENGAN BINTANG) ====================
 with tabs[1]:
     st.markdown("### 🔍 Deep Dive: Multi-Timeframe Analytics")
     
     # Control Panel
-    c_sel1, c_sel2, c_sel3 = st.columns([1, 1, 2])
+    c_sel1, c_sel2, c_sel3, c_sel4 = st.columns([2, 1, 1, 1])
     with c_sel1:
         selected_stock = st.selectbox("Pilih Saham", unique_stocks, key='dd_stock_select')
     with c_sel2:
-        interval = st.selectbox("Interval Chart", ["Daily", "Weekly", "Monthly"], key='dd_interval')
+        interval = st.selectbox("Interval", ["Daily", "Weekly", "Monthly"], key='dd_interval')
     with c_sel3:
-        chart_len = st.slider("Jumlah Data (Candle)", 30, 365, 120, key='dd_len')
+        chart_len = st.selectbox("Jumlah Data", [60, 90, 120, 180, 365], index=2, key='dd_len')
+    with c_sel4:
+        spike_threshold = st.slider("Threshold Anomali", 1.0, 5.0, 2.0, 0.5, key='spike_th')
 
     # Data Filter
     df_dive = df_transaksi[df_transaksi['Stock Code'] == selected_stock].copy().sort_values('Last Trading Date')
     
     if not df_dive.empty:
-        # --- LOGIC RESAMPLING ---
+        # Resampling logic
         if interval == "Weekly":
             df_resampled = df_dive.set_index('Last Trading Date').resample('W').agg({
                 'Open Price': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last',
-                'Volume': 'sum', 'Net Foreign Flow': 'sum', 'Big_Player_Anomaly': 'max', 
-                'Volume Spike (x)': 'max'
+                'Volume': 'sum', 'Net Foreign Flow': 'sum', 'Big_Player_Anomaly': 'max',
+                'Volume Spike (x)': 'max', 'Avg_Order_Volume': 'mean'
             }).dropna().reset_index()
         elif interval == "Monthly":
             df_resampled = df_dive.set_index('Last Trading Date').resample('M').agg({
                 'Open Price': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last',
-                'Volume': 'sum', 'Net Foreign Flow': 'sum', 'Big_Player_Anomaly': 'max', 
-                'Volume Spike (x)': 'max'
+                'Volume': 'sum', 'Net Foreign Flow': 'sum', 'Big_Player_Anomaly': 'max',
+                'Volume Spike (x)': 'max', 'Avg_Order_Volume': 'mean'
             }).dropna().reset_index()
         else:
-            # Untuk Daily, kita tetap pakai data asli
             df_resampled = df_dive.copy()
 
-        # Potong sesuai panjang chart
         df_chart = df_resampled.tail(chart_len)
         latest = df_dive.iloc[-1]
 
-        # --- KPI CARDS ---
+        # KPI Cards
         total_foreign = df_chart['Net Foreign Flow'].sum()
         price_change = df_chart['Close'].iloc[-1] - df_chart['Close'].iloc[0] if len(df_chart) > 1 else 0
         
@@ -256,34 +405,37 @@ with tabs[1]:
         elif total_foreign < 0 and price_change > 0: 
             status_text = "MARKUP RITEL"; status_color = "orange"
 
-        spike_vol_count = len(df_chart[df_chart['Volume Spike (x)'] > 1.5]) if 'Volume Spike (x)' in df_chart.columns else 0
-        spike_anom_count = len(df_chart[df_chart['Big_Player_Anomaly'] > 3.0]) if 'Big_Player_Anomaly' in df_chart.columns else 0
+        spike_vol_count = len(df_chart[df_chart['Volume Spike (x)'] > spike_threshold])
+        spike_anom_count = len(df_chart[df_chart['Big_Player_Anomaly'] > spike_threshold])
 
-        # TAMPILAN KPI
         k1, k2, k3, k4, k5 = st.columns(5)
         with k1: 
-            st.metric("Harga Terakhir", f"Rp {latest['Close']:,.0f}", f"{latest['Change %']:.2f}%")
+            st.metric("Harga", f"Rp {latest['Close']:,.0f}", f"{latest['Change %']:.2f}%")
         with k2: 
-            st.markdown(f"<div class='kpi-card'><div class='kpi-value' style='color:{status_color}'>{status_text}</div><div class='kpi-label'>Status Trend</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='kpi-card'><div class='kpi-value' style='color:{status_color}'>{status_text}</div><div class='kpi-label'>Status</div></div>", unsafe_allow_html=True)
         with k3: 
-            st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{spike_anom_count}x</div><div class='kpi-label'>Freq Anomali (>3x)</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{spike_anom_count}</div><div class='kpi-label'>Anomali >{spike_threshold}x</div></div>", unsafe_allow_html=True)
         with k4: 
-            st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{spike_vol_count}x</div><div class='kpi-label'>Freq Vol Spike (>1.5x)</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{spike_vol_count}</div><div class='kpi-label'>Spike >{spike_threshold}x</div></div>", unsafe_allow_html=True)
         with k5: 
-            st.metric("Total Foreign (Periode)", f"Rp {total_foreign/1e9:,.1f} M")
+            st.metric("Total Foreign", f"Rp {total_foreign/1e9:,.1f} M")
 
         st.divider()
 
-        # --- ADVANCED CHART DENGAN PERBAIKAN HOLE ---
+        # ADVANCED CHART DENGAN BINTANG CERAH
         fig = make_subplots(
             rows=3, cols=1, 
             shared_xaxes=True, 
             vertical_spacing=0.05, 
             row_heights=[0.5, 0.25, 0.25],
-            subplot_titles=(f"Price Action ({interval})", "Volume Analysis", "Net Foreign Flow")
+            subplot_titles=(
+                f"Price Action dengan Big Player Signal ({interval})", 
+                "Volume Analysis", 
+                "Net Foreign Flow"
+            )
         )
 
-        # 1. Candlestick dengan range break
+        # Candlestick
         fig.add_trace(go.Candlestick(
             x=df_chart['Last Trading Date'],
             open=df_chart['Open Price'], 
@@ -291,117 +443,126 @@ with tabs[1]:
             low=df_chart['Low'], 
             close=df_chart['Close'],
             name="OHLC",
-            showlegend=False
+            showlegend=False,
+            increasing_line_color='green',
+            decreasing_line_color='red'
         ), row=1, col=1)
 
-        # Tambahkan line chart untuk mengisi visualisasi (opsional)
-        fig.add_trace(go.Scatter(
-            x=df_chart['Last Trading Date'],
-            y=df_chart['Close'],
-            mode='lines',
-            line=dict(color='blue', width=1),
-            name='Close Line',
-            showlegend=False
-        ), row=1, col=1)
+        # BINTANG UNTUK AOVol SPIKING (WARNA CERAH)
+        if 'Avg_Order_Volume' in df_chart.columns:
+            # Hitung AOVol spike jika belum ada
+            if 'AOVol_Spike' not in df_chart.columns:
+                df_chart['AOVol_Spike'] = df_chart['Avg_Order_Volume'] / df_chart['Avg_Order_Volume'].rolling(5, min_periods=1).mean()
+            
+            # Titik dengan AOVol spike tinggi
+            aovol_spikes = df_chart[df_chart['AOVol_Spike'] > spike_threshold]
+            if not aovol_spikes.empty:
+                fig.add_trace(go.Scatter(
+                    x=aovol_spikes['Last Trading Date'],
+                    y=aovol_spikes['High'] * 1.03,  # Naikkan posisi bintang
+                    mode='markers',
+                    marker=dict(
+                        symbol='star',
+                        size=14,
+                        color='gold',
+                        line=dict(width=2, color='orange')
+                    ),
+                    name=f'AOVol Spike >{spike_threshold}x',
+                    text=[f"AOVol: {x:.1f}x<br>Harga: Rp {y:,.0f}" 
+                          for x, y in zip(aovol_spikes['AOVol_Spike'], aovol_spikes['Close'])],
+                    hoverinfo='text'
+                ), row=1, col=1)
 
-        # 2. Volume bars
+        # BINTANG UNTUK BIG PLAYER ANOMALI (WARNA CERAH)
+        if 'Big_Player_Anomaly' in df_chart.columns:
+            anomaly_points = df_chart[df_chart['Big_Player_Anomaly'] > spike_threshold]
+            if not anomaly_points.empty:
+                fig.add_trace(go.Scatter(
+                    x=anomaly_points['Last Trading Date'],
+                    y=anomaly_points['Low'] * 0.97,  # Turunkan posisi bintang
+                    mode='markers',
+                    marker=dict(
+                        symbol='diamond',
+                        size=12,
+                        color='magenta',
+                        line=dict(width=2, color='purple')
+                    ),
+                    name=f'Big Player >{spike_threshold}x',
+                    text=[f"Anomali: {x:.1f}x<br>Harga: Rp {y:,.0f}" 
+                          for x, y in zip(anomaly_points['Big_Player_Anomaly'], anomaly_points['Close'])],
+                    hoverinfo='text'
+                ), row=1, col=1)
+
+        # Volume bars
         colors_vol = ['red' if row['Close'] < row['Open Price'] else 'green' for _, row in df_chart.iterrows()]
         fig.add_trace(go.Bar(
             x=df_chart['Last Trading Date'],
-            y=df_chart['Volume'] / 1e6,  # Convert ke Juta
+            y=df_chart['Volume'] / 1e6,
             name="Volume (Jt)",
             marker_color=colors_vol,
             showlegend=False
         ), row=2, col=1)
 
-        # 3. Foreign Flow Bar
+        # Foreign Flow
         colors_ff = ['green' if val >= 0 else 'red' for val in df_chart['Net Foreign Flow']]
         fig.add_trace(go.Bar(
             x=df_chart['Last Trading Date'],
-            y=df_chart['Net Foreign Flow'] / 1e9,  # Convert ke Miliar
-            name="Net Foreign (M)",
+            y=df_chart['Net Foreign Flow'] / 1e9,
+            name="Foreign (M)",
             marker_color=colors_ff,
             showlegend=False
         ), row=3, col=1)
 
-        # Marker untuk Anomali (taruh di chart price)
-        if 'Big_Player_Anomaly' in df_chart.columns:
-            anomali_points = df_chart[df_chart['Big_Player_Anomaly'] > 3.0]
-            if not anomali_points.empty:
-                fig.add_trace(go.Scatter(
-                    x=anomali_points['Last Trading Date'],
-                    y=anomali_points['High'] * 1.02,
-                    mode='markers',
-                    marker=dict(symbol='star', size=10, color='orange', line=dict(width=1, color='black')),
-                    name='High Anomaly'
-                ), row=1, col=1)
-
-        # Update layout untuk menangani gap
+        # Layout dengan rangebreaks untuk skip weekend
         fig.update_layout(
             height=800,
             hovermode="x unified",
-            margin=dict(t=40, b=40, l=40, r=40),
+            margin=dict(t=50, b=40, l=40, r=40),
             xaxis_rangeslider_visible=False,
             showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+                bgcolor='rgba(255,255,255,0.8)'
+            )
         )
         
-        # Atur rangebreaks untuk menghilangkan weekend gap
         fig.update_xaxes(
-            rangebreaks=[
-                dict(bounds=["sat", "mon"]),  # skip weekend
-            ],
-            rangeslider_visible=False
+            rangebreaks=[dict(bounds=["sat", "mon"])],
+            title_text="Tanggal",
+            row=3, col=1
         )
         
-        fig.update_yaxes(title_text="Harga", row=1, col=1)
-        fig.update_yaxes(title_text="Volume (Jt)", row=2, col=1)
-        fig.update_yaxes(title_text="Foreign (M)", row=3, col=1)
+        fig.update_yaxes(title_text="Harga (Rp)", row=1, col=1)
+        fig.update_yaxes(title_text="Volume (Juta)", row=2, col=1)
+        fig.update_yaxes(title_text="Foreign (Miliar)", row=3, col=1)
         
         st.plotly_chart(fig, use_container_width=True)
 
-        # Informasi tambahan tentang data
-        st.caption(f"📊 Menampilkan {len(df_chart)} hari data trading (weekend otomatis di-skip)")
+        # Legenda sinyal
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown("⭐ **Bintang Kuning**: AOVol Spike (Average Order Volume melonjak)")
+        with col2:
+            st.markdown("💎 **Diamond Pink**: Big Player Anomali")
+        with col3:
+            st.markdown(f"📊 Threshold: {spike_threshold}x dari normal")
 
-        # --- RINGKASAN BROKER (KSEI) ---
-        st.subheader("🕵️ Ringkasan Aktivitas Broker Owner (KSEI 5%)")
-        
+        # Broker Activity
+        st.subheader("🕵️ Aktivitas Broker (KSEI 5%)")
         if len(df_kepemilikan) > 0 and 'Kode Efek' in df_kepemilikan.columns:
             ksei_stock = df_kepemilikan[df_kepemilikan['Kode Efek'] == selected_stock].copy()
-            
             if not ksei_stock.empty:
-                ksei_grouped = ksei_stock.sort_values('Tanggal_Data').groupby(['Kode Broker', 'Nama Pemegang Saham']).agg(
-                    Awal=('Jumlah Saham (Curr)', 'first'),
-                    Akhir=('Jumlah Saham (Curr)', 'last'),
-                    Tgl_Awal=('Tanggal_Data', 'first'),
-                    Tgl_Akhir=('Tanggal_Data', 'last')
-                ).reset_index()
+                ksei_latest = ksei_stock[ksei_stock['Tanggal_Data'] == ksei_stock['Tanggal_Data'].max()]
                 
-                ksei_grouped['Net Change'] = ksei_grouped['Akhir'] - ksei_grouped['Awal']
-                ksei_grouped['Status'] = np.where(
-                    ksei_grouped['Net Change'] > 0, "Accumulation", 
-                    np.where(ksei_grouped['Net Change'] < 0, "Distribution", "Hold")
-                )
-                
-                active_ksei = ksei_grouped[ksei_grouped['Net Change'] != 0].sort_values('Net Change', ascending=False)
-                
-                if not active_ksei.empty:
-                    st.dataframe(
-                        active_ksei[['Kode Broker', 'Nama Pemegang Saham', 'Awal', 'Akhir', 'Net Change', 'Status']],
-                        column_config={
-                            "Awal": st.column_config.NumberColumn("Awal (Lembar)", format="%d"),
-                            "Akhir": st.column_config.NumberColumn("Akhir (Lembar)", format="%d"),
-                            "Net Change": st.column_config.NumberColumn("Net Change", format="%+d"),
-                        },
-                        hide_index=True,
-                        use_container_width=True
-                    )
-                else:
-                    st.info("Tidak ada perubahan kepemilikan >5% pada data yang tersedia.")
-            else:
-                st.warning("Data KSEI tidak tersedia untuk saham ini.")
-    else:
-        st.error("Data saham tidak ditemukan.")
+                if not ksei_latest.empty:
+                    display_ksei = ksei_latest[['Nama Pemegang Saham', 'Kode Broker', 'Jumlah Saham (Curr)', 'Status']].copy()
+                    display_ksei['Jumlah Saham (Curr)'] = display_ksei['Jumlah Saham (Curr)'].apply(lambda x: f"{x:,.0f}")
+                    display_ksei.columns = ['Pemegang Saham', 'Broker', 'Jumlah Lembar', 'Status']
+                    st.dataframe(display_ksei, use_container_width=True, hide_index=True)
 
 # ==================== TAB 3: BROKER MUTASI ====================
 with tabs[2]:
@@ -409,10 +570,14 @@ with tabs[2]:
     
     if len(df_kepemilikan) > 0 and 'Kode Broker' in df_kepemilikan.columns:
         with st.container():
-            col_b1, col_b2 = st.columns(2)
+            col_b1, col_b2, col_b3 = st.columns(3)
             with col_b1:
-                mutasi_period = st.selectbox("Pilih Periode Mutasi", ["1 Minggu", "2 Minggu", "1 Bulan", "3 Bulan"], key='m_period')
+                mutasi_period = st.selectbox("Periode Mutasi", ["1 Minggu", "2 Minggu", "1 Bulan", "3 Bulan"], key='m_period')
                 days_map = {"1 Minggu": 7, "2 Minggu": 14, "1 Bulan": 30, "3 Bulan": 90}
+            with col_b2:
+                min_mutasi = st.number_input("Min Mutasi (Juta)", 0, 1000, 10) * 1e6
+            with col_b3:
+                top_n = st.slider("Top N Broker", 5, 30, 15)
         
         start_mutasi = df_kepemilikan['Tanggal_Data'].max() - timedelta(days=days_map[mutasi_period])
         df_ksei_period = df_kepemilikan[df_kepemilikan['Tanggal_Data'] >= start_mutasi].copy()
@@ -424,65 +589,70 @@ with tabs[2]:
             ).reset_index()
             
             mutasi['Net_Change'] = mutasi['Akhir'] - mutasi['Awal']
-            broker_summary = mutasi.groupby('Kode Broker')['Net_Change'].sum().reset_index()
+            mutasi = mutasi[abs(mutasi['Net_Change']) >= min_mutasi]
             
-            top_acc = broker_summary.nlargest(10, 'Net_Change')
-            top_dist = broker_summary.nsmallest(10, 'Net_Change')
+            broker_summary = mutasi.groupby('Kode Broker')['Net_Change'].sum().reset_index()
+            broker_summary = broker_summary[abs(broker_summary['Net_Change']) >= min_mutasi]
+            
+            top_acc = broker_summary.nlargest(top_n, 'Net_Change')
+            top_dist = broker_summary.nsmallest(top_n, 'Net_Change')
             top_dist['Net_Change'] = abs(top_dist['Net_Change'])
             
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("#### 🟢 Top Accumulator")
                 if not top_acc.empty:
-                    fig_acc = px.bar(top_acc, x='Net_Change', y='Kode Broker', orientation='h', 
-                                   title="Broker dengan Akumulasi Terbesar",
-                                   color_discrete_sequence=['#00c853'])
+                    fig_acc = px.bar(top_acc, x='Net_Change', y='Kode Broker', orientation='h',
+                                   title=f"Top {top_n} Accumulator ({mutasi_period})",
+                                   color='Net_Change', color_continuous_scale='Greens')
                     fig_acc.update_layout(xaxis=dict(tickformat=",.0f"))
+                    fig_acc.update_xaxes(title_text="Net Buy (Lembar)")
                     st.plotly_chart(fig_acc, use_container_width=True)
             
             with c2:
                 st.markdown("#### 🔴 Top Distributor")
                 if not top_dist.empty:
                     fig_dist = px.bar(top_dist, x='Net_Change', y='Kode Broker', orientation='h',
-                                    title="Broker dengan Distribusi Terbesar",
-                                    color_discrete_sequence=['#ff3d00'])
+                                    title=f"Top {top_n} Distributor ({mutasi_period})",
+                                    color='Net_Change', color_continuous_scale='Reds')
                     fig_dist.update_layout(xaxis=dict(tickformat=",.0f"))
+                    fig_dist.update_xaxes(title_text="Net Sell (Lembar)")
                     st.plotly_chart(fig_dist, use_container_width=True)
                 
             st.divider()
-            st.markdown("#### 🔎 Detail Mutasi per Broker")
             
             if len(broker_summary) > 0:
-                sel_broker = st.selectbox("Pilih Broker", sorted(broker_summary['Kode Broker'].unique()), key='m_broker')
-                detail = mutasi[(mutasi['Kode Broker'] == sel_broker) & (mutasi['Net_Change'] != 0)].sort_values('Net_Change', ascending=False)
+                sel_broker = st.selectbox("🔍 Detail Mutasi per Broker", 
+                                         sorted(broker_summary['Kode Broker'].unique()), 
+                                         key='m_broker')
+                detail = mutasi[mutasi['Kode Broker'] == sel_broker].sort_values('Net_Change', ascending=False)
                 
                 if not detail.empty:
-                    st.dataframe(
-                        detail[['Kode Efek', 'Awal', 'Akhir', 'Net_Change']],
-                        column_config={
-                            "Awal": st.column_config.NumberColumn("Awal (Lembar)", format="%d"),
-                            "Akhir": st.column_config.NumberColumn("Akhir (Lembar)", format="%d"),
-                            "Net_Change": st.column_config.NumberColumn("Net Mutasi", format="%+d")
-                        },
-                        use_container_width=True, 
-                        hide_index=True
-                    )
-                else:
-                    st.info("Tidak ada mutasi untuk broker ini")
+                    detail_display = detail[['Kode Efek', 'Awal', 'Akhir', 'Net_Change']].copy()
+                    detail_display['Awal'] = detail_display['Awal'].apply(lambda x: f"{x:,.0f}")
+                    detail_display['Akhir'] = detail_display['Akhir'].apply(lambda x: f"{x:,.0f}")
+                    detail_display['Net_Change'] = detail_display['Net_Change'].apply(lambda x: f"{x:+,.0f}")
+                    detail_display.columns = ['Saham', 'Awal (lembar)', 'Akhir (lembar)', 'Net Mutasi']
+                    st.dataframe(detail_display, use_container_width=True, hide_index=True)
         else:
             st.warning("Tidak ada data KSEI dalam periode ini")
     else:
         st.warning("Data broker tidak tersedia")
 
-# ==================== TAB 4: MARKET MAP & FOREIGN ====================
+# ==================== TAB 4: MARKET MAP ====================
 with tabs[3]:
-    st.markdown("### 🗺️ Market Flow & Foreign Radar")
+    st.markdown("### 🗺️ Market Map & Foreign Radar")
     
     # Foreign Flow Timeframe
-    st.markdown("#### 🌍 Top Foreign Flow (Multi-Timeframe)")
-    ff_period = st.selectbox("Rentang Waktu Foreign Flow", 
-                            ["Hari Ini", "5 Hari", "10 Hari", "20 Hari", "30 Hari", "60 Hari"], 
-                            key='ff_time')
+    st.markdown("#### 🌍 Top Foreign Flow")
+    
+    col_period, col_top = st.columns(2)
+    with col_period:
+        ff_period = st.selectbox("Rentang Waktu", 
+                                ["Hari Ini", "5 Hari", "10 Hari", "20 Hari", "30 Hari", "60 Hari"], 
+                                key='ff_time')
+    with col_top:
+        top_n_ff = st.slider("Top N", 5, 30, 20, key='top_ff')
     
     days_ff_map = {"Hari Ini": 0, "5 Hari": 5, "10 Hari": 10, "20 Hari": 20, 
                    "30 Hari": 30, "60 Hari": 60}
@@ -496,7 +666,8 @@ with tabs[3]:
                 'Net Foreign Flow': 'sum',
                 'Value': 'sum',
                 'Close': 'last',
-                'Change %': 'mean'
+                'Change %': 'mean',
+                'Volume': 'sum'
             }).reset_index()
     else:
         start_date_ff = max_date - timedelta(days=days_back)
@@ -506,55 +677,46 @@ with tabs[3]:
             'Net Foreign Flow': 'sum',
             'Value': 'sum',
             'Close': 'last',
-            'Change %': 'mean'
+            'Change %': 'mean',
+            'Volume': 'sum'
         }).reset_index()
     
     if not ff_data.empty and len(ff_data) > 0:
         col_f1, col_f2 = st.columns(2)
         
         with col_f1:
-            st.markdown(f"#### 🟢 Top Foreign Buy ({ff_period})")
-            top_buy = ff_data.nlargest(20, 'Net Foreign Flow')
+            st.markdown(f"#### 🟢 Top {top_n_ff} Foreign Buy ({ff_period})")
+            top_buy = ff_data.nlargest(top_n_ff, 'Net Foreign Flow')
             if not top_buy.empty:
-                st.dataframe(
-                    top_buy[['Stock Code', 'Close', 'Net Foreign Flow']],
-                    column_config={
-                        "Stock Code": "Kode",
-                        "Close": st.column_config.NumberColumn("Harga", format="Rp %d"),
-                        "Net Foreign Flow": st.column_config.NumberColumn("Net Buy", format="Rp %,.0f")
-                    },
-                    hide_index=True, 
-                    use_container_width=True, 
-                    height=500
-                )
+                display_buy = top_buy[['Stock Code', 'Close', 'Net Foreign Flow', 'Change %']].copy()
+                display_buy['Close'] = display_buy['Close'].apply(lambda x: f"Rp {x:,.0f}")
+                display_buy['Net Foreign Flow'] = display_buy['Net Foreign Flow'].apply(lambda x: f"Rp {x:,.0f}")
+                display_buy['Change %'] = display_buy['Change %'].apply(lambda x: f"{x:.2f}%")
+                display_buy.columns = ['Kode', 'Harga', 'Net Buy', 'Change %']
+                st.dataframe(display_buy, use_container_width=True, hide_index=True)
             
         with col_f2:
-            st.markdown(f"#### 🔴 Top Foreign Sell ({ff_period})")
-            top_sell = ff_data.nsmallest(20, 'Net Foreign Flow')
+            st.markdown(f"#### 🔴 Top {top_n_ff} Foreign Sell ({ff_period})")
+            top_sell = ff_data.nsmallest(top_n_ff, 'Net Foreign Flow')
             if not top_sell.empty:
-                st.dataframe(
-                    top_sell[['Stock Code', 'Close', 'Net Foreign Flow']],
-                    column_config={
-                        "Stock Code": "Kode",
-                        "Close": st.column_config.NumberColumn("Harga", format="Rp %d"),
-                        "Net Foreign Flow": st.column_config.NumberColumn("Net Sell", format="Rp %,.0f")
-                    },
-                    hide_index=True, 
-                    use_container_width=True, 
-                    height=500
-                )
+                display_sell = top_sell[['Stock Code', 'Close', 'Net Foreign Flow', 'Change %']].copy()
+                display_sell['Close'] = display_sell['Close'].apply(lambda x: f"Rp {x:,.0f}")
+                display_sell['Net Foreign Flow'] = display_sell['Net Foreign Flow'].apply(lambda x: f"Rp {x:,.0f}")
+                display_sell['Change %'] = display_sell['Change %'].apply(lambda x: f"{x:.2f}%")
+                display_sell.columns = ['Kode', 'Harga', 'Net Sell', 'Change %']
+                st.dataframe(display_sell, use_container_width=True, hide_index=True)
         
-        # Visualisasi tambahan
+        # Visualisasi
         st.divider()
         st.markdown("#### 📊 Foreign Flow Distribution")
         
         ff_viz = ff_data.head(50).copy()
-        ff_viz['Abs_Net_Foreign'] = abs(ff_viz['Net Foreign Flow'])
+        ff_viz['Abs_Net'] = abs(ff_viz['Net Foreign Flow'])
         
         fig = px.scatter(ff_viz, x='Value', y='Net Foreign Flow',
-                        text='Stock Code', size='Abs_Net_Foreign',
+                        text='Stock Code', size='Abs_Net',
                         color='Net Foreign Flow', color_continuous_scale='RdYlGn',
-                        title=f"Foreign Flow Map ({ff_period})")
+                        title=f"Foreign Flow Map - Size: Nilai Transaksi, Warna: Net Foreign ({ff_period})")
         fig.update_traces(textposition='top center')
         fig.update_layout(height=500)
         st.plotly_chart(fig, use_container_width=True)
@@ -568,7 +730,7 @@ col1, col2, col3 = st.columns(3)
 with col1:
     st.caption(f"📅 Last Update: {max_date}")
 with col2:
-    st.caption(f"📊 Total Saham: {len(unique_stocks)}")
+    st.caption(f"📊 Total Saham: {len(unique_stocks):,}")
 with col3:
     if st.button("🔄 Refresh Data", use_container_width=True):
         st.cache_data.clear()
