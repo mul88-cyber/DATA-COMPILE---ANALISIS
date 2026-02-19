@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import io
-import json
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
@@ -10,8 +9,8 @@ st.set_page_config(page_title="Bandarmology Dashboard", layout="wide")
 st.title("📈 Dashboard Analisa Bandarmology")
 
 # 1. Fungsi Authentikasi & Load Data dari GDrive
-@st.cache_data(ttl=3600) # Cache data selama 1 jam agar tidak loading terus menerus
-def load_data_from_gdrive(file_id, is_excel=False):
+@st.cache_data(ttl=3600) # Cache data selama 1 jam
+def load_excel_from_gdrive(file_id):
     # Mengambil rahasia Service Account dari Streamlit Secrets
     gcp_service_account = st.secrets["gcp_service_account"]
     
@@ -22,26 +21,27 @@ def load_data_from_gdrive(file_id, is_excel=False):
     )
     service = build('drive', 'v3', credentials=credentials)
     
-    # Download file
+    # Download 1 file Excel
     request = service.files().get_media(fileId=file_id)
     downloaded = io.BytesIO(request.execute())
     
-    # Baca ke Pandas DataFrame
-    if is_excel:
-        return pd.read_excel(downloaded, engine='openpyxl')
-    else:
-        return pd.read_csv(downloaded)
+    # Membaca struktur file Excel
+    xls = pd.ExcelFile(downloaded, engine='openpyxl')
+    
+    # Memisahkan datanya berdasarkan nama sheet
+    df_trans = pd.read_excel(xls, sheet_name='Daily Transaksi')
+    df_kepemilikan = pd.read_excel(xls, sheet_name='Daily Perubahan Kepemilikan')
+    
+    return df_trans, df_kepemilikan
 
-# === GANTI DENGAN FILE ID GOOGLE DRIVE BAPAK ===
-# Cara dapatkan File ID: Buka file di GDrive, copy teks acak di antara /d/ dan /view di URL
-FILE_ID_TRANSAKSI = "MASUKKAN_FILE_ID_CSV_TRANSAKSI_DISINI" 
-FILE_ID_KEPEMILIKAN = "MASUKKAN_FILE_ID_CSV_KEPEMILIKAN_DISINI"
+# === GANTI DENGAN 1 FILE ID GOOGLE DRIVE BAPAK SAJA ===
+# Cara dapatkan File ID: Buka file Excel di GDrive, copy teks acak di antara /d/ dan /view di URL
+FILE_ID_EXCEL = "1dT9GMsA_WJpHzoP8-B4hnV-3jDqfVQEp" 
 
 # 2. Proses Load Data (Akan ada indikator loading di dashboard)
-with st.spinner('Mengambil data dari Google Drive...'):
+with st.spinner('Membaca data 63MB dari Google Drive (mungkin butuh waktu beberapa saat)...'):
     try:
-        df_transaksi = load_data_from_gdrive(FILE_ID_TRANSAKSI, is_excel=False)
-        df_kepemilikan = load_data_from_gdrive(FILE_ID_KEPEMILIKAN, is_excel=False)
+        df_transaksi, df_kepemilikan = load_excel_from_gdrive(FILE_ID_EXCEL)
         st.success("Data berhasil dimuat!")
     except Exception as e:
         st.error(f"Gagal memuat data: {e}")
