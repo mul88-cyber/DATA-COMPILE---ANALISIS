@@ -130,7 +130,7 @@ df_kepemilikan = df_kepemilikan.dropna(subset=['Tanggal_Data', 'Kode Efek'])
 numeric_cols = ['Volume', 'Value', 'Foreign Buy', 'Foreign Sell', 'Net Foreign Flow', 
                 'Big_Player_Anomaly', 'Close', 'Volume Spike (x)', 'Avg_Order_Volume',
                 'Tradeble Shares', 'Free Float', 'Typical Price', 'TPxV', 'Frequency',
-                'Previous', 'Open Price', 'High', 'Low']
+                'Previous', 'Open Price', 'High', 'Low', 'Change %']
 for col in numeric_cols:
     if col in df_transaksi.columns:
         df_transaksi[col] = pd.to_numeric(df_transaksi[col], errors='coerce').fillna(0)
@@ -145,16 +145,16 @@ if 'Tradeble Shares' in df_transaksi.columns:
     df_transaksi.loc[mask_tradeble, 'Foreign_Pct'] = (
         (df_transaksi.loc[mask_tradeble, 'Foreign Buy'] - df_transaksi.loc[mask_tradeble, 'Foreign Sell']) / 
         df_transaksi.loc[mask_tradeble, 'Tradeble Shares'] * 100
-    )
+    ).fillna(0)
     df_transaksi.loc[mask_tradeble, 'Volume_Pct_Tradeble'] = (
         df_transaksi.loc[mask_tradeble, 'Volume'] / df_transaksi.loc[mask_tradeble, 'Tradeble Shares'] * 100
-    )
+    ).fillna(0)
 
 if 'Frequency' in df_transaksi.columns:
     mask_freq = df_transaksi['Frequency'] > 0
     df_transaksi.loc[mask_freq, 'Value_Per_Order'] = (
         df_transaksi.loc[mask_freq, 'Value'] / df_transaksi.loc[mask_freq, 'Frequency']
-    )
+    ).fillna(0)
 
 # Data siap
 unique_stocks = sorted(df_transaksi['Stock Code'].unique())
@@ -669,7 +669,7 @@ with tabs[3]:
             st.markdown("#### 📊 Ownership Distribution")
             
             if len(latest_ownership) > 0:
-                # PERBAIKAN: Hitung dalam juta dengan benar
+                # Hitung dalam juta dengan benar
                 ownership_values = latest_ownership['Jumlah Saham (Curr)'] / 1e6
                 
                 fig = px.histogram(
@@ -771,15 +771,18 @@ with tabs[4]:
                 st.plotly_chart(fig, use_container_width=True)
         
         with col2:
-            # Foreign flow map
+            # Foreign flow map - PERBAIKAN: Buat kolom absolute value terlebih dahulu
             foreign_map = today_data.groupby('Stock Code').agg({
                 'Net Foreign Flow': 'sum',
                 'Value': 'sum'
             }).reset_index()
-            foreign_map = foreign_map.nlargest(20, 'abs(Net Foreign Flow)')
+            
+            # Buat kolom absolute value
+            foreign_map['Abs_Net_Foreign'] = abs(foreign_map['Net Foreign Flow'])
+            foreign_map = foreign_map.nlargest(20, 'Abs_Net_Foreign')
             
             fig = px.scatter(foreign_map, x='Value', y='Net Foreign Flow',
-                           text='Stock Code', size='abs(Net Foreign Flow)',
+                           text='Stock Code', size='Abs_Net_Foreign',
                            color='Net Foreign Flow', color_continuous_scale='RdYlGn',
                            title="Foreign Flow Map")
             fig.update_traces(textposition='top center')
@@ -824,9 +827,9 @@ with tabs[4]:
             st.markdown("#### ⚡ Top Anomalies")
             anomalies = today_data[today_data['Big_Player_Anomaly'] > 3].nlargest(10, 'Big_Player_Anomaly')
             if len(anomalies) > 0:
-                anomalies = anomalies[['Stock Code', 'Close', 'Big_Player_Anomaly', 'Volume Spike (x)']].copy()
-                anomalies.columns = ['Kode', 'Harga', 'Anomali', 'Spike']
-                st.dataframe(anomalies, use_container_width=True)
+                anomalies_display = anomalies[['Stock Code', 'Close', 'Big_Player_Anomaly', 'Volume Spike (x)']].copy()
+                anomalies_display.columns = ['Kode', 'Harga', 'Anomali', 'Spike']
+                st.dataframe(anomalies_display, use_container_width=True)
             else:
                 st.info("Tidak ada anomaly signifikan")
         
@@ -836,17 +839,19 @@ with tabs[4]:
         advance = (today_data['Change %'] > 0).sum()
         decline = (today_data['Change %'] < 0).sum()
         unchanged = (today_data['Change %'] == 0).sum()
+        total = len(today_data)
         
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Advancing", advance, f"{(advance/len(today_data)*100):.0f}%")
-        col2.metric("Declining", decline, f"{(decline/len(today_data)*100):.0f}%")
-        col3.metric("Unchanged", unchanged, f"{(unchanged/len(today_data)*100):.0f}%")
-        
-        fig = go.Figure(data=[go.Pie(labels=['Advance', 'Decline', 'Unchanged'],
-                                    values=[advance, decline, unchanged],
-                                    marker_colors=['green', 'red', 'gray'])])
-        fig.update_layout(height=300, title="Market Breadth")
-        st.plotly_chart(fig, use_container_width=True)
+        if total > 0:
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Advancing", advance, f"{(advance/total*100):.0f}%")
+            col2.metric("Declining", decline, f"{(decline/total*100):.0f}%")
+            col3.metric("Unchanged", unchanged, f"{(unchanged/total*100):.0f}%")
+            
+            fig = go.Figure(data=[go.Pie(labels=['Advance', 'Decline', 'Unchanged'],
+                                        values=[advance, decline, unchanged],
+                                        marker_colors=['green', 'red', 'gray'])])
+            fig.update_layout(height=300, title="Market Breadth")
+            st.plotly_chart(fig, use_container_width=True)
         
     else:
         st.warning(f"Tidak ada data untuk {max_date.strftime('%d-%m-%Y')}")
@@ -854,3 +859,8 @@ with tabs[4]:
 # Footer
 st.markdown("---")
 st.caption(f"🔄 Last Update: {max_date.strftime('%d-%m-%Y')} | Total Data: {len(df_transaksi):,} rows | Broker Tracked: {len(unique_brokers_ksei)}")
+
+# Auto-refresh button
+if st.button("🔄 Refresh Data", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
