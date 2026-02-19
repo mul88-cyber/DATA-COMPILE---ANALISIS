@@ -155,16 +155,56 @@ if df_transaksi is None or df_kepemilikan is None:
     st.error("Failed to load data. Please check connection and try again.")
     st.stop()
 
-# Data Preprocessing
-df_transaksi['Last Trading Date'] = pd.to_datetime(df_transaksi['Last Trading Date'])
-df_transaksi['Change %'] = pd.to_numeric(df_transaksi['Change %'].str.replace('%', ''), errors='coerce')
-df_kepemilikan['Tanggal_Data'] = pd.to_datetime(df_kepemilikan['Tanggal_Data'])
+# Data Preprocessing - ROBUST HANDLING
+st.write("🔄 Processing data...")
+
+# Konversi tanggal
+df_transaksi['Last Trading Date'] = pd.to_numeric(df_transaksi['Last Trading Date'], errors='coerce')
+df_transaksi['Last Trading Date'] = pd.to_datetime(df_transaksi['Last Trading Date'], format='%Y%m%d', errors='coerce')
+
+# Handle kolom Change % dengan aman
+if 'Change %' in df_transaksi.columns:
+    try:
+        # Cek tipe data dan konversi dengan aman
+        if df_transaksi['Change %'].dtype == 'object':
+            # Jika string, bersihkan dan konversi
+            df_transaksi['Change %'] = df_transaksi['Change %'].astype(str).str.replace('%', '', regex=False)
+            df_transaksi['Change %'] = pd.to_numeric(df_transaksi['Change %'], errors='coerce')
+        else:
+            # Jika sudah numerik, langsung konversi
+            df_transaksi['Change %'] = pd.to_numeric(df_transaksi['Change %'], errors='coerce')
+    except Exception as e:
+        st.warning(f"Error processing Change %: {e}. Menggunakan metode alternatif.")
+        # Fallback: hitung dari Close dan Previous
+        if 'Close' in df_transaksi.columns and 'Previous' in df_transaksi.columns:
+            df_transaksi['Change %'] = ((df_transaksi['Close'] - df_transaksi['Previous']) / df_transaksi['Previous'] * 100)
+else:
+    st.warning("Kolom 'Change %' tidak ditemukan. Menggunakan metode alternatif.")
+    if 'Close' in df_transaksi.columns and 'Previous' in df_transaksi.columns:
+        df_transaksi['Change %'] = ((df_transaksi['Close'] - df_transaksi['Previous']) / df_transaksi['Previous'] * 100)
+
+# Konversi kolom numerik lainnya
+numeric_columns = ['Volume', 'Value', 'Foreign Buy', 'Foreign Sell', 'Net Foreign Flow', 
+                   'Big_Player_Anomaly', 'Avg_Order_Volume', 'Volume Spike (x)']
+for col in numeric_columns:
+    if col in df_transaksi.columns:
+        df_transaksi[col] = pd.to_numeric(df_transaksi[col], errors='coerce')
+
+# Konversi tanggal untuk df_kepemilikan
+df_kepemilikan['Tanggal_Data'] = pd.to_numeric(df_kepemilikan['Tanggal_Data'], errors='coerce')
+df_kepemilikan['Tanggal_Data'] = pd.to_datetime(df_kepemilikan['Tanggal_Data'], format='%Y%m%d', errors='coerce')
+
+# Drop rows dengan tanggal NaN
+df_transaksi = df_transaksi.dropna(subset=['Last Trading Date'])
+df_kepemilikan = df_kepemilikan.dropna(subset=['Tanggal_Data'])
 
 # Get unique values untuk filter
-unique_stocks = sorted(df_transaksi['Stock Code'].unique())
-unique_sectors = sorted(df_transaksi['Sector'].dropna().unique())
+unique_stocks = sorted(df_transaksi['Stock Code'].dropna().unique().tolist())
+unique_sectors = sorted(df_transaksi['Sector'].dropna().unique().tolist()) if 'Sector' in df_transaksi.columns else []
 min_date = df_transaksi['Last Trading Date'].min()
 max_date = df_transaksi['Last Trading Date'].max()
+
+st.success(f"✅ Data siap! {len(df_transaksi):,} transaksi, {len(unique_stocks)} saham")
 
 # ==================== MAIN TABS ====================
 tabs = st.tabs([
@@ -186,11 +226,15 @@ with tabs[0]:
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            sector_filter = st.multiselect(
-                "Sektor",
-                options=unique_sectors,
-                default=[]
-            )
+            if unique_sectors:
+                sector_filter = st.multiselect(
+                    "Sektor",
+                    options=unique_sectors,
+                    default=[]
+                )
+            else:
+                sector_filter = []
+                st.info("Kolom sektor tidak tersedia")
         
         with col2:
             min_volume = st.number_input(
@@ -218,9 +262,9 @@ with tabs[0]:
     # Date range untuk screener
     date_range = st.date_input(
         "Periode Analisis",
-        value=(max_date - timedelta(days=30), max_date),
-        min_value=min_date,
-        max_value=max_date
+        value=(max_date.date() - timedelta(days=30), max_date.date()),
+        min_value=min_date.date(),
+        max_value=max_date.date()
     )
     
     # Filter dan agregasi data untuk screener
@@ -232,70 +276,117 @@ with tabs[0]:
     
     df_screener = df_transaksi[mask_screener].copy()
     
-    # Agregasi per saham
-    screener_result = df_screener.groupby('Stock Code').agg({
-        'Company Name': 'first',
-        'Sector': 'first',
-        'Close': 'last',
-        'Change %': 'last',
-        'Volume': 'sum',
-        'Value': 'sum',
-        'Net Foreign Flow': 'sum',
-        'Big_Player_Anomaly': 'sum',
-        'Volume Spike (x)': 'max'
-    }).reset_index()
-    
-    # Apply filters
-    screener_result = screener_result[screener_result['Value'] >= min_volume * 1e9]
-    
-    if anomaly_filter == "Ada Anomali":
-        screener_result = screener_result[screener_result['Big_Player_Anomaly'] > 0]
-    elif anomaly_filter == "Tidak Ada Anomali":
-        screener_result = screener_result[screener_result['Big_Player_Anomaly'] == 0]
-    
-    if foreign_filter == "Net Buy":
-        screener_result = screener_result[screener_result['Net Foreign Flow'] > 0]
-    elif foreign_filter == "Net Sell":
-        screener_result = screener_result[screener_result['Net Foreign Flow'] < 0]
-    
-    # Display screener results
-    st.markdown(f"**Hasil Screener: {len(screener_result)} saham ditemukan**")
-    
-    # Format untuk display
-    display_cols = ['Stock Code', 'Company Name', 'Sector', 'Close', 'Change %', 
-                    'Volume', 'Value', 'Net Foreign Flow', 'Big_Player_Anomaly']
-    
-    screener_display = screener_result[display_cols].copy()
-    screener_display['Value'] = screener_display['Value'] / 1e9
-    screener_display['Volume'] = screener_display['Volume'] / 1e6
-    
-    screener_display.columns = ['Kode', 'Nama', 'Sektor', 'Harga', 'Change %', 
-                                'Volume (Jt)', 'Nilai (M)', 'Net Foreign (M)', 'Anomali']
-    
-    # Color coding for change %
-    def color_change(val):
-        color = 'green' if val > 0 else 'red' if val < 0 else 'black'
-        return f'color: {color}'
-    
-    styled_df = screener_display.style.applymap(color_change, subset=['Change %'])
-    st.dataframe(styled_df, use_container_width=True, height=500)
-    
-    # Visualisasi Screener
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        fig = px.scatter(screener_result, x='Value', y='Net Foreign Flow', 
-                        size='Volume', color='Change %', hover_data=['Stock Code'],
-                        title="Institutional Flow vs Transaction Value",
-                        labels={'Value': 'Transaction Value (Rp)', 'Net Foreign Flow': 'Net Foreign (Rp)'})
-        st.plotly_chart(fig, use_container_width=True)
-    
-    with col2:
-        top_anomaly = screener_result.nlargest(10, 'Big_Player_Anomaly')[['Stock Code', 'Big_Player_Anomaly', 'Company Name']]
-        fig = px.bar(top_anomaly, x='Stock Code', y='Big_Player_Anomaly',
-                    title="Top 10 Big Player Anomaly",
-                    color='Big_Player_Anomaly', color_continuous_scale='Viridis')
-        st.plotly_chart(fig, use_container_width=True)
+    if len(df_screener) > 0:
+        # Agregasi per saham
+        agg_dict = {
+            'Company Name': 'first' if 'Company Name' in df_screener.columns else 'first',
+            'Close': 'last',
+            'Change %': 'last',
+            'Volume': 'sum',
+            'Value': 'sum',
+            'Net Foreign Flow': 'sum',
+            'Big_Player_Anomaly': 'sum',
+            'Volume Spike (x)': 'max'
+        }
+        
+        # Tambahkan Sector jika ada
+        if 'Sector' in df_screener.columns:
+            agg_dict['Sector'] = 'first'
+        
+        screener_result = df_screener.groupby('Stock Code').agg(agg_dict).reset_index()
+        
+        # Apply filters
+        screener_result = screener_result[screener_result['Value'] >= min_volume * 1e9]
+        
+        if anomaly_filter == "Ada Anomali":
+            screener_result = screener_result[screener_result['Big_Player_Anomaly'] > 0]
+        elif anomaly_filter == "Tidak Ada Anomali":
+            screener_result = screener_result[screener_result['Big_Player_Anomaly'] == 0]
+        
+        if foreign_filter == "Net Buy":
+            screener_result = screener_result[screener_result['Net Foreign Flow'] > 0]
+        elif foreign_filter == "Net Sell":
+            screener_result = screener_result[screener_result['Net Foreign Flow'] < 0]
+        
+        # Display screener results
+        st.markdown(f"**Hasil Screener: {len(screener_result)} saham ditemukan**")
+        
+        # Format untuk display
+        display_cols = ['Stock Code']
+        if 'Company Name' in screener_result.columns:
+            display_cols.append('Company Name')
+        if 'Sector' in screener_result.columns:
+            display_cols.append('Sector')
+        display_cols.extend(['Close', 'Change %', 'Volume', 'Value', 'Net Foreign Flow', 'Big_Player_Anomaly'])
+        
+        screener_display = screener_result[[col for col in display_cols if col in screener_result.columns]].copy()
+        
+        # Konversi ke unit yang lebih mudah dibaca
+        if 'Value' in screener_display.columns:
+            screener_display['Value'] = screener_display['Value'] / 1e9
+        if 'Volume' in screener_display.columns:
+            screener_display['Volume'] = screener_display['Volume'] / 1e6
+        if 'Net Foreign Flow' in screener_display.columns:
+            screener_display['Net Foreign Flow'] = screener_display['Net Foreign Flow'] / 1e9
+        
+        # Rename columns
+        column_names = {
+            'Stock Code': 'Kode',
+            'Company Name': 'Nama',
+            'Sector': 'Sektor',
+            'Close': 'Harga',
+            'Change %': 'Change %',
+            'Volume': 'Volume (Jt)',
+            'Value': 'Nilai (M)',
+            'Net Foreign Flow': 'Net Foreign (M)',
+            'Big_Player_Anomaly': 'Anomali'
+        }
+        screener_display = screener_display.rename(columns=column_names)
+        
+        # Color coding for change %
+        def color_change(val):
+            try:
+                if pd.notna(val) and val > 0:
+                    return 'color: green'
+                elif pd.notna(val) and val < 0:
+                    return 'color: red'
+                else:
+                    return 'color: black'
+            except:
+                return 'color: black'
+        
+        styled_df = screener_display.style.applymap(color_change, subset=['Change %'] if 'Change %' in screener_display.columns else [])
+        st.dataframe(styled_df, use_container_width=True, height=500)
+        
+        # Visualisasi Screener
+        if len(screener_result) > 0:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if 'Value' in screener_result.columns and 'Net Foreign Flow' in screener_result.columns:
+                    fig = px.scatter(screener_result, x='Value', y='Net Foreign Flow', 
+                                    size='Volume' if 'Volume' in screener_result.columns else None, 
+                                    color='Change %' if 'Change %' in screener_result.columns else None, 
+                                    hover_data=['Stock Code'],
+                                    title="Institutional Flow vs Transaction Value",
+                                    labels={'Value': 'Transaction Value (Rp)', 'Net Foreign Flow': 'Net Foreign (Rp)'})
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                if 'Big_Player_Anomaly' in screener_result.columns:
+                    top_anomaly = screener_result.nlargest(10, 'Big_Player_Anomaly')[['Stock Code', 'Big_Player_Anomaly']]
+                    if 'Company Name' in screener_result.columns:
+                        top_anomaly['Company Name'] = top_anomaly['Stock Code'].map(
+                            screener_result.set_index('Stock Code')['Company Name'].to_dict()
+                        )
+                    
+                    fig = px.bar(top_anomaly, x='Stock Code', y='Big_Player_Anomaly',
+                                title="Top 10 Big Player Anomaly",
+                                color='Big_Player_Anomaly', color_continuous_scale='Viridis')
+                    st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.warning("Tidak ada data untuk periode yang dipilih")
+
 
 # ==================== TAB 2: STOCK DEEP DIVE ====================
 with tabs[1]:
