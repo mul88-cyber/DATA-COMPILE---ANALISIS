@@ -9,13 +9,14 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 import warnings
+
 warnings.filterwarnings('ignore')
 
 # ==========================================
 # 1. KONFIGURASI HALAMAN & CSS
 # ==========================================
 st.set_page_config(
-    page_title="Bandarmology Master V2", 
+    page_title="Bandarmology Master V3", 
     layout="wide", 
     page_icon="🐋",
     initial_sidebar_state="collapsed"
@@ -23,44 +24,41 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .main-header { background: linear-gradient(90deg, #0f2027, #203a43, #2c5364); padding: 1.2rem; border-radius: 12px; color: white; margin-bottom: 1.2rem; }
-    .metric-card { background: white; padding: 1rem; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid #2c5364; }
-    .filter-container { background: #f8fafc; padding: 1rem; border-radius: 10px; border: 1px solid #e2e8f0; margin-bottom: 1rem; }
-    .signal-box { padding: 0.5rem 1rem; border-radius: 8px; margin: 0.2rem 0; font-weight: 600; border: 1px solid #e0e0e0; }
-    .stTabs [data-baseweb="tab-list"] { gap: 1rem; background-color: #f8fafc; padding: 0.4rem; border-radius: 10px; }
-    .stTabs [data-baseweb="tab"] { border-radius: 8px; padding: 0.4rem 1rem; font-weight: 600; }
+    .main-header { background: linear-gradient(90deg, #000428, #004e92); padding: 1.5rem; border-radius: 12px; color: white; margin-bottom: 1.5rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .metric-card { background: white; padding: 1rem; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-left: 5px solid #004e92; }
+    .kpi-card { background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 15px; text-align: center; }
+    .kpi-value { font-size: 24px; font-weight: bold; color: #004e92; }
+    .kpi-label { font-size: 14px; color: #6c757d; }
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; background-color: white; padding: 10px; border-radius: 10px; border: 1px solid #e2e8f0; }
+    .stTabs [data-baseweb="tab"] { border-radius: 5px; padding: 8px 16px; font-weight: 600; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="main-header">
-    <h2 style='margin:0;'>🐋 Bandarmology Master V2 - Institutional Intelligence</h2>
-    <p style='margin:0; opacity:0.9;'>Advanced Screener • KSEI 5% Overlay • Broker Mutasi • Foreign Flow Radar</p>
+    <h1 style='margin:0; font-size: 2rem;'>🐋 Bandarmology Master V3</h1>
+    <p style='margin:0; opacity:0.8; font-size: 1rem;'>Deep Dive Analytics • Multi-Timeframe • Foreign Flow Radar • Spike Detection</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Helper Function
-def format_rupiah(angka):
-    if pd.isna(angka): return "Rp 0"
-    if abs(angka) >= 1e9: return f"Rp {angka/1e9:,.1f} M"
-    if abs(angka) >= 1e6: return f"Rp {angka/1e6:,.1f} Jt"
-    return f"Rp {angka:,.0f}"
-
 # ==========================================
-# 2. LOAD & PREPROCESS DATA
+# 2. FUNGSI LOAD DATA & PREPROCESSING
 # ==========================================
 @st.cache_data(ttl=3600)
 def load_data():
     try:
+        # Ganti dengan st.secrets Anda di production
         gcp_service_account = st.secrets["gcp_service_account"]
         credentials = service_account.Credentials.from_service_account_info(
             gcp_service_account, scopes=['https://www.googleapis.com/auth/drive.readonly']
         )
         service = build('drive', 'v3', credentials=credentials)
         
+        # Load Transaksi (Ganti FILE ID sesuai file Anda)
         req_trans = service.files().get_media(fileId="1GvDd3NDh6A2y9Dm6bCzXO057-RjSKbT8")
         df_transaksi = pd.read_csv(io.BytesIO(req_trans.execute()))
         
+        # Load Kepemilikan (Ganti FILE ID sesuai file Anda)
         req_ksei = service.files().get_media(fileId="1PTr6XmBp6on-RNyaHC4mWpn6Y3vsR8xr")
         df_kepemilikan = pd.read_csv(io.BytesIO(req_ksei.execute()))
         
@@ -69,28 +67,33 @@ def load_data():
         st.error(f"Error loading data: {e}")
         return None, None
 
-with st.spinner("📊 Extracting market intelligence from Drive..."):
+with st.spinner("📊 Memuat Data Bandarmology..."):
     df_transaksi, df_kepemilikan = load_data()
 
 if df_transaksi is None: st.stop()
 
-# Konversi tanggal
+# --- PREPROCESSING ---
+# Konversi Tanggal
 df_transaksi['Last Trading Date'] = pd.to_datetime(df_transaksi['Last Trading Date'].astype(str), errors='coerce')
 df_kepemilikan['Tanggal_Data'] = pd.to_datetime(df_kepemilikan['Tanggal_Data'].astype(str), errors='coerce')
 
+# Drop NA Penting
 df_transaksi = df_transaksi.dropna(subset=['Last Trading Date', 'Stock Code'])
 df_kepemilikan = df_kepemilikan.dropna(subset=['Tanggal_Data', 'Kode Efek'])
 
+# Konversi Numerik
 numeric_cols = ['Volume', 'Value', 'Foreign Buy', 'Foreign Sell', 'Net Foreign Flow', 
                 'Big_Player_Anomaly', 'Close', 'Volume Spike (x)', 'Avg_Order_Volume',
                 'Tradeble Shares', 'Free Float', 'Typical Price', 'TPxV', 'Frequency',
                 'Previous', 'Open Price', 'High', 'Low', 'Change %']
+
 for col in numeric_cols:
     if col in df_transaksi.columns:
         df_transaksi[col] = pd.to_numeric(df_transaksi[col], errors='coerce').fillna(0)
 
-df_transaksi['Foreign_Pct'] = np.where(df_transaksi['Tradeble Shares'] > 0, (df_transaksi['Net Foreign Flow'] / df_transaksi['Tradeble Shares']) * 100, 0)
-df_transaksi['Volume_Pct_Tradeble'] = np.where(df_transaksi['Tradeble Shares'] > 0, (df_transaksi['Volume'] / df_transaksi['Tradeble Shares']) * 100, 0)
+# Metrik Tambahan
+df_transaksi['Volume_Pct_Tradeble'] = np.where(df_transaksi['Tradeble Shares'] > 0, 
+                                               (df_transaksi['Volume'] / df_transaksi['Tradeble Shares']) * 100, 0)
 
 unique_stocks = sorted(df_transaksi['Stock Code'].unique())
 max_date = df_transaksi['Last Trading Date'].max().date()
@@ -99,32 +102,25 @@ default_start = max_date - timedelta(days=30)
 # ==========================================
 # 3. DASHBOARD TABS
 # ==========================================
+# Gunakan session state untuk mengingat tab aktif jika diperlukan, tapi st.tabs basic sudah cukup stabil
 tabs = st.tabs([
     "🎯 SCREENER PRO", 
-    "🔍 DEEP DIVE & KSEI", 
+    "🔍 DEEP DIVE & CHART", 
     "🏦 BROKER MUTASI",
-    "👥 OWNERSHIP RADAR",
     "🗺️ MARKET MAP"
 ])
 
-# ==================== TAB 1: SCREENER PRO ====================
+# ==================== TAB 1: SCREENER PRO (FORMATTED) ====================
 with tabs[0]:
     st.markdown("### 🎯 Screener Pro - Institutional Activity")
     
     with st.container():
-        st.markdown('<div class="filter-container">', unsafe_allow_html=True)
-        row1 = st.columns([1.5, 1.5, 1.5, 1.5, 1])
-        with row1[0]: min_value = st.number_input("Min Nilai (M)", 0, 10000, 10) * 1e9
-        with row1[1]: min_volume_pct = st.slider("Min Vol % Tradeble", 0.0, 10.0, 0.5, 0.1)
-        with row1[2]: anomaly_threshold = st.slider("Min Anomali AOV (x)", 0, 20, 2)
-        with row1[3]: foreign_filter = st.selectbox("Foreign Flow", ["Semua", "Net Buy > 1M", "Net Sell > 1M", "Net Buy Kuat", "Net Sell Kuat"])
-        with row1[4]: st.markdown("<br>", unsafe_allow_html=True); top_only = st.checkbox("Top 50 Only", value=True)
-        
-        row2 = st.columns(4)
-        with row2[0]: min_price = st.number_input("Min Harga", 0, 100000, 50)
-        with row2[1]: min_foreign_pct = st.slider("Min Foreign % Change", -10.0, 10.0, -1.0, 0.1, format="%.1f%%")
-        with row2[2]: date_range = st.date_input("Periode Agregasi", value=(default_start, max_date))
-        with row2[3]: sort_by = st.selectbox("Sort By", ["Potential Score", "Anomali", "Nilai", "Volume %", "Foreign Flow"])
+        st.markdown('<div class="filter-container" style="background:#f8f9fa; padding:15px; border-radius:10px;">', unsafe_allow_html=True)
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: min_value = st.number_input("Min Transaksi (Miliar)", 0, 1000, 10, key='s_val') * 1e9
+        with c2: min_anomali = st.slider("Min Anomali AOV (x)", 0, 20, 2, key='s_anom')
+        with c3: foreign_filter = st.selectbox("Foreign Flow", ["Semua", "Net Buy", "Net Sell"], key='s_ff')
+        with c4: date_range = st.date_input("Periode Agregasi", value=(default_start, max_date), key='s_date')
         st.markdown('</div>', unsafe_allow_html=True)
     
     if len(date_range) == 2:
@@ -132,355 +128,301 @@ with tabs[0]:
         mask = (df_transaksi['Last Trading Date'].dt.date >= start_date) & (df_transaksi['Last Trading Date'].dt.date <= end_date)
         df_filter = df_transaksi[mask].copy()
         
-        if len(df_filter) > 0:
-            agg_dict = {
-                'Close': 'last', 'Change %': 'mean', 'Volume': 'sum', 'Value': 'sum', 
-                'Net Foreign Flow': 'sum', 'Big_Player_Anomaly': 'max', 'Volume Spike (x)': 'max',
-                'Tradeble Shares': 'last', 'Avg_Order_Volume': 'mean'
-            }
-            summary = df_filter.groupby('Stock Code').agg(agg_dict).reset_index()
+        if not df_filter.empty:
+            summary = df_filter.groupby('Stock Code').agg({
+                'Close': 'last', 'Change %': 'mean', 'Value': 'sum', 
+                'Net Foreign Flow': 'sum', 'Big_Player_Anomaly': 'max', 
+                'Volume Spike (x)': 'max', 'Volume_Pct_Tradeble': 'mean'
+            }).reset_index()
             
-            summary['Buying_Pressure'] = np.where(summary['Value'] > 0, (summary['Net Foreign Flow'] / summary['Value'] * 100), 0)
-            summary['Volume_Concentration'] = np.where(summary['Tradeble Shares'] > 0, (summary['Volume'] / summary['Tradeble Shares'] * 100), 0)
-            summary['Anomaly_Score'] = summary['Big_Player_Anomaly'] * summary['Volume Spike (x)']
-            summary['Potential_Score'] = (summary['Volume_Concentration'] * 0.3) + (abs(summary['Buying_Pressure']) * 0.3) + (summary['Anomaly_Score'] * 0.4)
+            summary['Pressure'] = np.where(summary['Value']>0, (summary['Net Foreign Flow']/summary['Value']*100), 0)
+            summary['Inst_Score'] = (summary['Volume_Pct_Tradeble']*0.4) + (summary['Big_Player_Anomaly']*0.3) + (abs(summary['Pressure'])*0.3)
             
-            # Apply filters
-            summary = summary[(summary['Value'] >= min_value) & (summary['Volume_Concentration'] >= min_volume_pct) & 
-                              (summary['Big_Player_Anomaly'] >= anomaly_threshold) & (summary['Close'] >= min_price)]
+            # Filter
+            summary = summary[summary['Value'] >= min_value]
+            summary = summary[summary['Big_Player_Anomaly'] >= min_anomali]
             
-            if foreign_filter == "Net Buy > 1M": summary = summary[summary['Net Foreign Flow'] > 1e9]
-            elif foreign_filter == "Net Sell > 1M": summary = summary[summary['Net Foreign Flow'] < -1e9]
+            if foreign_filter == "Net Buy": summary = summary[summary['Net Foreign Flow'] > 0]
+            elif foreign_filter == "Net Sell": summary = summary[summary['Net Foreign Flow'] < 0]
             
-            sort_map = {"Potential Score": "Potential_Score", "Anomali": "Anomaly_Score", "Nilai": "Value", "Volume %": "Volume_Concentration", "Foreign Flow": "Net Foreign Flow"}
-            summary = summary.sort_values(sort_map.get(sort_by, "Potential_Score"), ascending=False)
-            if top_only: summary = summary.head(50)
+            summary = summary.sort_values('Inst_Score', ascending=False).head(100)
             
-            st.markdown(f"**🎯 {len(summary)} Saham Terdeteksi (Mode Agregasi)**")
+            st.markdown(f"**Menampilkan Top {len(summary)} Saham (Diurutkan berdasarkan Bandar Score)**")
             
-            if len(summary) > 0:
-                # Stylish Dataframe
-                display_df = summary[['Stock Code', 'Close', 'Change %', 'Value', 'Net Foreign Flow', 'Volume_Concentration', 'Big_Player_Anomaly', 'Volume Spike (x)', 'Potential_Score']].copy()
-                
-                st.dataframe(
-                    display_df,
-                    use_container_width=True,
-                    height=500,
-                    column_config={
-                        "Stock Code": st.column_config.TextColumn("Kode", width="small"),
-                        "Close": st.column_config.NumberColumn("Harga (Rp)", format="%d"),
-                        "Change %": st.column_config.NumberColumn("Avg Chg %", format="%.2f%%"),
-                        "Value": st.column_config.NumberColumn("Total Transaksi", format="%d"),
-                        "Net Foreign Flow": st.column_config.NumberColumn("Net Foreign", format="%d"),
-                        "Volume_Concentration": st.column_config.ProgressColumn("Vol % Tradeble", format="%.1f%%", min_value=0, max_value=20),
-                        "Big_Player_Anomaly": st.column_config.NumberColumn("Max Anomali (x)", format="%.1f"),
-                        "Potential_Score": st.column_config.NumberColumn("Score", format="%.1f")
-                    },
-                    hide_index=True
-                )
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    fig = px.scatter(summary.head(20), x='Volume_Concentration', y='Net Foreign Flow', size='Potential_Score', color='Change %', hover_data=['Stock Code'], title="Volume Concentration vs Foreign Flow (Top 20)")
-                    st.plotly_chart(fig, use_container_width=True)
-                with col2:
-                    top_potential = summary.nlargest(15, 'Potential_Score')
-                    fig = px.bar(top_potential, x='Stock Code', y='Potential_Score', title="Top 15 Highest Potential Stocks", color='Potential_Score', color_continuous_scale='Viridis')
-                    st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("Tidak ada saham yang memenuhi kriteria")
+            # FORMAT ANGKA DENGAN SEPARATOR KOMA (COLUMN CONFIG)
+            st.dataframe(
+                summary[['Stock Code', 'Close', 'Change %', 'Value', 'Net Foreign Flow', 'Volume_Pct_Tradeble', 'Big_Player_Anomaly', 'Inst_Score']],
+                use_container_width=True,
+                height=600,
+                column_config={
+                    "Stock Code": st.column_config.TextColumn("Kode", width="small"),
+                    "Close": st.column_config.NumberColumn("Harga", format="%d"), # Format integer basic
+                    "Change %": st.column_config.NumberColumn("Avg Chg%", format="%.2f%%"),
+                    "Value": st.column_config.NumberColumn("Total Value", format="Rp %,d"), # Koma separator
+                    "Net Foreign Flow": st.column_config.NumberColumn("Net Foreign", format="Rp %,d"), # Koma separator
+                    "Volume_Pct_Tradeble": st.column_config.ProgressColumn("Vol % Tradeble", format="%.2f%%", min_value=0, max_value=max(summary['Volume_Pct_Tradeble'].max(), 1)),
+                    "Big_Player_Anomaly": st.column_config.NumberColumn("Max Anomali (x)", format="%.1f"),
+                    "Inst_Score": st.column_config.NumberColumn("Score", format="%.1f")
+                },
+                hide_index=True
+            )
+        else:
+            st.info("Data tidak ditemukan untuk periode ini.")
 
-# ==================== TAB 2: DEEP DIVE & KSEI (VERSI BROKER REVEAL) ====================
+# ==================== TAB 2: DEEP DIVE & CHART (ADVANCED) ====================
 with tabs[1]:
-    st.markdown("### 🔍 Deep Dive: Price vs Broker Accumulation")
-    st.caption("Melihat korelasi pergerakan harga dengan akumulasi broker spesifik (pemegang >5%).")
+    st.markdown("### 🔍 Deep Dive: Multi-Timeframe Analytics")
     
-    col_sel1, col_sel2 = st.columns([1, 3])
-    with col_sel1:
-        selected_stock = st.selectbox("Pilih Saham", unique_stocks, key='dd_stock')
-        period_days = st.selectbox("Rentang Waktu", [30, 60, 90, 180, 365], index=2, key='dd_period')
-    
-    start_dive = max_date - timedelta(days=period_days)
-    
-    # Filter Data
-    df_dive = df_transaksi[(df_transaksi['Stock Code'] == selected_stock) & (df_transaksi['Last Trading Date'].dt.date >= start_dive)].copy().sort_values('Last Trading Date')
-    ksei_dive = df_kepemilikan[(df_kepemilikan['Kode Efek'] == selected_stock) & (df_kepemilikan['Tanggal_Data'].dt.date >= start_dive)].copy()
+    # Control Panel
+    c_sel1, c_sel2, c_sel3 = st.columns([1, 1, 2])
+    with c_sel1:
+        # Gunakan index=0 atau cari index dari session state agar tidak reset
+        selected_stock = st.selectbox("Pilih Saham", unique_stocks, key='dd_stock_select')
+    with c_sel2:
+        interval = st.selectbox("Interval Chart", ["Daily", "Weekly", "Monthly"], key='dd_interval')
+    with c_sel3:
+        chart_len = st.slider("Jumlah Data (Candle)", 30, 365, 120, key='dd_len')
+
+    # Data Filter
+    df_dive = df_transaksi[df_transaksi['Stock Code'] == selected_stock].copy().sort_values('Last Trading Date')
     
     if not df_dive.empty:
-        latest = df_dive.iloc[-1]
+        # --- LOGIC RESAMPLING (Daily -> Weekly/Monthly) ---
+        if interval == "Weekly":
+            df_resampled = df_dive.set_index('Last Trading Date').resample('W').agg({
+                'Open Price': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last',
+                'Volume': 'sum', 'Net Foreign Flow': 'sum', 'Big_Player_Anomaly': 'max', 'Volume Spike (x)': 'max'
+            }).dropna().reset_index()
+        elif interval == "Monthly":
+            df_resampled = df_dive.set_index('Last Trading Date').resample('M').agg({
+                'Open Price': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last',
+                'Volume': 'sum', 'Net Foreign Flow': 'sum', 'Big_Player_Anomaly': 'max', 'Volume Spike (x)': 'max'
+            }).dropna().reset_index()
+        else:
+            df_resampled = df_dive.copy() # Daily
+
+        # Potong sesuai panjang chart
+        df_chart = df_resampled.tail(chart_len)
+        latest = df_dive.iloc[-1] # Data terakhir tetap pakai daily untuk info harga terkini
+
+        # --- KPI CARDS CALCULATION ---
+        # 1. Status Akumulasi/Distribusi (Logic Sederhana)
+        # Jika Net Foreign Positif dalam periode chart & Harga Naik/Stabil = Akumulasi
+        total_foreign = df_chart['Net Foreign Flow'].sum()
+        price_change = df_chart['Close'].iloc[-1] - df_chart['Close'].iloc[0]
         
-        # Metrics Row
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Harga Terakhir", f"Rp {latest['Close']:,.0f}", f"{latest['Change %']:.2f}%")
-        m2.metric("Total Value", format_rupiah(latest['Value']))
-        m3.metric("Net Foreign", format_rupiah(latest['Net Foreign Flow']))
-        anomali_color = "normal" if latest['Big_Player_Anomaly'] < 2 else "inverse"
-        m4.metric("Anomali AOV", f"{latest['Big_Player_Anomaly']:.1f}x", delta="Spike" if latest['Big_Player_Anomaly']>3 else None, delta_color=anomali_color)
-        
+        status_text = "NEUTRAL"
+        status_color = "gray"
+        if total_foreign > 0 and price_change >= 0: status_text = "AKUMULASI"; status_color = "green"
+        elif total_foreign < 0 and price_change < 0: status_text = "DISTRIBUSI"; status_color = "red"
+        elif total_foreign > 0 and price_change < 0: status_text = "DIV. POSITIF"; status_color = "blue" # Asing beli tapi harga turun
+        elif total_foreign < 0 and price_change > 0: status_text = "MARKUP RITEL"; status_color = "orange" # Harga naik asing jual
+
+        # 2. Hitung Spikes
+        spike_vol_count = len(df_chart[df_chart['Volume Spike (x)'] > 1.5])
+        spike_anom_count = len(df_chart[df_chart['Big_Player_Anomaly'] > 3.0])
+
+        # --- TAMPILAN KPI CARDS ---
+        k1, k2, k3, k4, k5 = st.columns(5)
+        with k1: st.metric("Harga Terakhir", f"Rp {latest['Close']:,.0f}", f"{latest['Change %']:.2f}%")
+        with k2: st.markdown(f"<div class='kpi-card'><div class='kpi-value' style='color:{status_color}'>{status_text}</div><div class='kpi-label'>Status Trend</div></div>", unsafe_allow_html=True)
+        with k3: st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{spike_anom_count}x</div><div class='kpi-label'>Freq Anomali (>3x)</div></div>", unsafe_allow_html=True)
+        with k4: st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{spike_vol_count}x</div><div class='kpi-label'>Freq Vol Spike (>1.5x)</div></div>", unsafe_allow_html=True)
+        with k5: st.metric("Total Foreign (Periode)", f"Rp {total_foreign/1e9:,.1f} M")
+
         st.divider()
 
-        # --- FITUR UTAMA: CHART HARGA VS KEPEMILIKAN PER BROKER ---
-        if not ksei_dive.empty:
-            # 1. Siapkan Data KSEI (Group by Tanggal & Broker agar bisa di-stack)
-            # Kita gunakan Kode Broker sebagai pembeda warna. Jika kosong, pakai Nama Pemegang Saham.
-            ksei_dive['Identity'] = ksei_dive['Kode Broker'].fillna(ksei_dive['Nama Pemegang Saham'].str[:15])
-            
-            # Aggregate per tanggal dan identitas broker
-            ksei_stack = ksei_dive.groupby(['Tanggal_Data', 'Identity', 'Nama Pemegang Saham'])['Jumlah Saham (Curr)'].sum().reset_index()
-            
-            # Buat Base Chart (Stacked Bar untuk Broker)
-            fig = px.bar(
-                ksei_stack, 
-                x='Tanggal_Data', 
-                y='Jumlah Saham (Curr)', 
-                color='Identity', # Ini kuncinya: Warna beda tiap broker
-                title=f"Peta Penguasaan Broker di {selected_stock}",
-                labels={'Jumlah Saham (Curr)': 'Lembar Saham', 'Identity': 'Kode Broker'},
-                hover_data={'Nama Pemegang Saham': True, 'Jumlah Saham (Curr)': ':,.0f'}
-            )
+        # --- ADVANCED CHART (Price + Markers + Foreign Flow) ---
+        fig = make_subplots(
+            rows=2, cols=1, 
+            shared_xaxes=True, 
+            vertical_spacing=0.03, 
+            row_heights=[0.7, 0.3],
+            subplot_titles=(f"Price Action ({interval})", "Net Foreign Flow")
+        )
 
-            # Tambahkan Garis Harga (Dual Axis)
-            # Kita perlu trace harga dari dataframe transaksi
-            fig.add_trace(
-                go.Scatter(
-                    x=df_dive['Last Trading Date'],
-                    y=df_dive['Close'],
-                    name="Harga Saham",
-                    line=dict(color='red', width=3),
-                    mode='lines'
+        # 1. Candlestick
+        fig.add_trace(go.Candlestick(
+            x=df_chart['Last Trading Date'],
+            open=df_chart['Open Price'], high=df_chart['High'],
+            low=df_chart['Low'], close=df_chart['Close'],
+            name="OHLC"
+        ), row=1, col=1)
+
+        # 2. Marker Bintang untuk Spike/Anomali
+        # Filter titik dimana terjadi anomali
+        anomali_points = df_chart[df_chart['Big_Player_Anomaly'] > 3.0]
+        if not anomali_points.empty:
+            fig.add_trace(go.Scatter(
+                x=anomali_points['Last Trading Date'],
+                y=anomali_points['High'] * 1.02, # Taruh sedikit di atas candle
+                mode='markers',
+                marker=dict(symbol='star', size=12, color='orange', line=dict(width=1, color='black')),
+                name='High Anomaly'
+            ), row=1, col=1)
+
+        # 3. Foreign Flow Bar Chart
+        colors_ff = ['green' if val >= 0 else 'red' for val in df_chart['Net Foreign Flow']]
+        fig.add_trace(go.Bar(
+            x=df_chart['Last Trading Date'],
+            y=df_chart['Net Foreign Flow'],
+            name="Net Foreign Flow",
+            marker_color=colors_ff
+        ), row=2, col=1)
+
+        fig.update_layout(
+            height=700, 
+            hovermode="x unified", 
+            margin=dict(t=30, b=30, l=30, r=30),
+            xaxis_rangeslider_visible=False,
+            showlegend=True
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # --- RINGKASAN AKTIVITAS PER BROKER (KSEI) ---
+        st.subheader("🕵️ Ringkasan Aktivitas Broker Owner (KSEI 5%)")
+        ksei_stock = df_kepemilikan[df_kepemilikan['Kode Efek'] == selected_stock].copy()
+        
+        if not ksei_stock.empty:
+            # Hitung Net Change selama periode data KSEI yang tersedia
+            ksei_grouped = ksei_stock.sort_values('Tanggal_Data').groupby(['Kode Broker', 'Nama Pemegang Saham']).agg(
+                Awal=('Jumlah Saham (Curr)', 'first'),
+                Akhir=('Jumlah Saham (Curr)', 'last'),
+                Tgl_Awal=('Tanggal_Data', 'first'),
+                Tgl_Akhir=('Tanggal_Data', 'last')
+            ).reset_index()
+            
+            ksei_grouped['Net Change'] = ksei_grouped['Akhir'] - ksei_grouped['Awal']
+            ksei_grouped['Status'] = np.where(ksei_grouped['Net Change'] > 0, "Accumulation", np.where(ksei_grouped['Net Change'] < 0, "Distribution", "Hold"))
+            
+            # Tampilkan hanya yang ada pergerakan
+            active_ksei = ksei_grouped[ksei_grouped['Net Change'] != 0].sort_values('Net Change', ascending=False)
+            
+            if not active_ksei.empty:
+                st.dataframe(
+                    active_ksei[['Kode Broker', 'Nama Pemegang Saham', 'Awal', 'Akhir', 'Net Change', 'Status']],
+                    column_config={
+                        "Awal": st.column_config.NumberColumn("Awal (Lembar)", format="%,d"),
+                        "Akhir": st.column_config.NumberColumn("Akhir (Lembar)", format="%,d"),
+                        "Net Change": st.column_config.NumberColumn("Net Change", format="%+d"),
+                    },
+                    hide_index=True,
+                    use_container_width=True
                 )
-            )
-
-            # Update Layout untuk Dual Axis manual di Plotly Express
-            fig.update_traces(yaxis="y2", selector=dict(type='scatter')) # Set garis harga ke sumbu kanan
-            
-            fig.update_layout(
-                height=600,
-                hovermode="x unified",
-                legend=dict(orientation="h", y=1.1, title_text="Broker / Holder"),
-                yaxis=dict(
-                    title="Total Lembar Saham (Stack per Broker)",
-                    side="left",
-                    showgrid=False
-                ),
-                yaxis2=dict(
-                    title="Harga Saham (Rp)",
-                    side="right",
-                    overlaying="y",
-                    showgrid=True,
-                    gridcolor='lightgray'
-                ),
-                xaxis=dict(title="Tanggal")
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # --- TABEL RINGKASAN AKUMULASI/DISTRIBUSI PER BROKER (DI BAWAH CHART) ---
-            st.markdown("#### 📊 Siapa yang Akumulasi & Distribusi?")
-            
-            # Hitung selisih Awal vs Akhir periode per Broker
-            first_date = ksei_dive['Tanggal_Data'].min()
-            last_date = ksei_dive['Tanggal_Data'].max()
-            
-            start_holdings = ksei_dive[ksei_dive['Tanggal_Data'] == first_date].groupby(['Kode Broker', 'Nama Pemegang Saham'])['Jumlah Saham (Curr)'].sum().reset_index().rename(columns={'Jumlah Saham (Curr)': 'Awal'})
-            end_holdings = ksei_dive[ksei_dive['Tanggal_Data'] == last_date].groupby(['Kode Broker', 'Nama Pemegang Saham'])['Jumlah Saham (Curr)'].sum().reset_index().rename(columns={'Jumlah Saham (Curr)': 'Akhir'})
-            
-            # Gabung data awal dan akhir
-            mutation = pd.merge(start_holdings, end_holdings, on=['Kode Broker', 'Nama Pemegang Saham'], how='outer').fillna(0)
-            mutation['Net Change'] = mutation['Akhir'] - mutation['Awal']
-            mutation['Status'] = np.where(mutation['Net Change'] > 0, 'Akumulasi', np.where(mutation['Net Change'] < 0, 'Distribusi', 'Hold'))
-            
-            # Filter yang ada pergerakan saja & sort
-            active_movers = mutation[mutation['Net Change'] != 0].sort_values('Net Change', ascending=False)
-            
-            if not active_movers.empty:
-                # Format tampilan
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("**🟢 Top Accumulators**")
-                    top_acc = active_movers[active_movers['Net Change'] > 0].head(10)
-                    st.dataframe(
-                        top_acc[['Kode Broker', 'Nama Pemegang Saham', 'Net Change']],
-                        column_config={
-                            "Net Change": st.column_config.NumberColumn("Beli Bersih (Lembar)", format="+%d")
-                        },
-                        hide_index=True, use_container_width=True
-                    )
-                
-                with col2:
-                    st.markdown("**🔴 Top Distributors**")
-                    top_dist = active_movers[active_movers['Net Change'] < 0].sort_values('Net Change', ascending=True).head(10)
-                    st.dataframe(
-                        top_dist[['Kode Broker', 'Nama Pemegang Saham', 'Net Change']],
-                        column_config={
-                            "Net Change": st.column_config.NumberColumn("Jual Bersih (Lembar)", format="%d")
-                        },
-                        hide_index=True, use_container_width=True
-                    )
             else:
-                st.info("Tidak ada perubahan kepemilikan >5% yang signifikan pada periode ini.")
-                
+                st.info("Tidak ada perubahan kepemilikan >5% pada data yang tersedia.")
         else:
-            st.warning("Data KSEI tidak tersedia untuk saham ini di periode yang dipilih.")
-            # Fallback ke chart harga biasa
-            fig = px.line(df_dive, x='Last Trading Date', y='Close', title="Chart Harga (Tanpa Data KSEI)")
-            st.plotly_chart(fig, use_container_width=True)
+            st.warning("Data KSEI tidak tersedia untuk saham ini.")
 
     else:
-        st.error("Data transaksi tidak ditemukan.")
+        st.error("Data saham tidak ditemukan.")
 
 # ==================== TAB 3: BROKER MUTASI ====================
 with tabs[2]:
-    st.markdown("### 🏦 Broker Mutasi & Intelligence")
-    st.markdown("Melacak broker mana yang sedang **Akumulasi** dan **Distribusi** dalam periode tertentu.")
+    st.markdown("### 🏦 Broker Mutation Radar")
     
-    if len(df_kepemilikan) > 0 and 'Kode Broker' in df_kepemilikan.columns:
-        
-        with st.container(border=True):
-            col_b1, col_b2 = st.columns(2)
-            with col_b1:
-                broker_period = st.selectbox("Periode Mutasi KSEI:", ["1 Minggu Terakhir", "1 Bulan Terakhir", "3 Bulan Terakhir"])
-                days_map = {"1 Minggu Terakhir": 7, "1 Bulan Terakhir": 30, "3 Bulan Terakhir": 90}
-                start_ksei = df_kepemilikan['Tanggal_Data'].max() - timedelta(days=days_map[broker_period])
-            with col_b2:
-                st.markdown("<br>", unsafe_allow_html=True)
-                st.caption("Menghitung delta (perubahan) jumlah saham yang dikuasai broker pada awal periode vs akhir periode.")
-
-        # Filter Data Mutasi
-        df_ksei_mutasi = df_kepemilikan[df_kepemilikan['Tanggal_Data'] >= start_ksei].copy()
-        
-        if not df_ksei_mutasi.empty:
-            # Cari kepemilikan awal dan akhir per broker
-            mutasi = df_ksei_mutasi.sort_values('Tanggal_Data').groupby(['Kode Efek', 'Kode Broker']).agg(
-                Awal=('Jumlah Saham (Curr)', 'first'),
-                Akhir=('Jumlah Saham (Curr)', 'last')
-            ).reset_index()
-            
-            mutasi['Net_Mutasi'] = mutasi['Akhir'] - mutasi['Awal']
-            
-            # Agregasi Total Mutasi per Broker (Lintas Saham)
-            broker_delta = mutasi.groupby('Kode Broker')['Net_Mutasi'].sum().reset_index()
-            
-            top_acc = broker_delta.nlargest(10, 'Net_Mutasi')
-            top_dist = broker_delta.nsmallest(10, 'Net_Mutasi')
-            top_dist['Net_Mutasi'] = abs(top_dist['Net_Mutasi']) # Dimutlakkan untuk visual chart
-            
-            col_chart1, col_chart2 = st.columns(2)
-            with col_chart1:
-                st.markdown(f"#### 🟢 Top 10 Broker Accumulator ({broker_period})")
-                fig_acc = px.bar(top_acc, x='Net_Mutasi', y='Kode Broker', orientation='h', color_discrete_sequence=['#10B981'])
-                fig_acc.update_layout(yaxis={'categoryorder':'total ascending'})
-                st.plotly_chart(fig_acc, use_container_width=True)
-                
-            with col_chart2:
-                st.markdown(f"#### 🔴 Top 10 Broker Distributor ({broker_period})")
-                fig_dist = px.bar(top_dist, x='Net_Mutasi', y='Kode Broker', orientation='h', color_discrete_sequence=['#EF4444'])
-                fig_dist.update_layout(yaxis={'categoryorder':'total ascending'})
-                st.plotly_chart(fig_dist, use_container_width=True)
-                
-            st.divider()
-            
-            # Cek Mutasi Detail per Broker
-            st.markdown("#### 🔎 Detail Mutasi per Broker")
-            selected_broker_mutasi = st.selectbox("Pilih Broker untuk melihat saham apa saja yang diakumulasi/distribusi:", sorted(mutasi['Kode Broker'].unique()))
-            
-            detail_broker = mutasi[(mutasi['Kode Broker'] == selected_broker_mutasi) & (mutasi['Net_Mutasi'] != 0)].copy()
-            if not detail_broker.empty:
-                detail_broker = detail_broker.sort_values('Net_Mutasi', ascending=False)
-                
-                def color_mutasi(val):
-                    return 'color: green; font-weight:bold;' if val > 0 else 'color: red; font-weight:bold;'
-                
-                st.dataframe(
-                    detail_broker[['Kode Efek', 'Awal', 'Akhir', 'Net_Mutasi']].style.map(color_mutasi, subset=['Net_Mutasi']).format("{:,.0f}", subset=['Awal', 'Akhir', 'Net_Mutasi']),
-                    use_container_width=True, hide_index=True
-                )
-            else:
-                st.info("Tidak ada pergerakan (mutasi) >5% untuk broker ini pada periode yang dipilih.")
-                
-# ==================== TAB 4: OWNERSHIP RADAR ====================
-with tabs[3]:
-    st.markdown("### 👑 Ownership Concentration Radar")
+    with st.container():
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            mutasi_period = st.selectbox("Pilih Periode Mutasi", ["1 Minggu", "2 Minggu", "1 Bulan", "3 Bulan"], key='m_period')
+            days_map = {"1 Minggu": 7, "2 Minggu": 14, "1 Bulan": 30, "3 Bulan": 90}
     
-    if len(df_kepemilikan) > 0:
-        latest_date = df_kepemilikan['Tanggal_Data'].max()
-        latest_ownership = df_kepemilikan[df_kepemilikan['Tanggal_Data'] == latest_date].copy()
-        
-        col_o1, col_o2 = st.columns([1.5, 1])
-        with col_o1:
-            st.markdown("#### 🎯 Saham Paling Terkonsentrasi (Dikuasai Paus)")
-            tradeble_info = df_transaksi[df_transaksi['Last Trading Date'].dt.date == max_date][['Stock Code', 'Tradeble Shares']].drop_duplicates()
-            
-            if len(tradeble_info) > 0:
-                concentration = latest_ownership.groupby('Kode Efek')['Jumlah Saham (Curr)'].sum().reset_index()
-                concentration = concentration.merge(tradeble_info, left_on='Kode Efek', right_on='Stock Code', how='left')
-                
-                concentration['Pct_of_Tradeble'] = np.where(concentration['Tradeble Shares'] > 0, (concentration['Jumlah Saham (Curr)'] / concentration['Tradeble Shares'] * 100), 0)
-                concentration = concentration.sort_values('Pct_of_Tradeble', ascending=False).head(20)
-                
-                fig = px.bar(concentration, x='Kode Efek', y='Pct_of_Tradeble', color='Pct_of_Tradeble', color_continuous_scale='Reds')
-                st.plotly_chart(fig, use_container_width=True)
-                
-        with col_o2:
-            st.markdown("#### 🔍 Lacak Pemegang Saham")
-            own_stock = st.selectbox("Cek Siapa Pemilik Saham:", sorted(latest_ownership['Kode Efek'].unique()), key='own_stock')
-            if own_stock:
-                stock_owners = latest_ownership[latest_ownership['Kode Efek'] == own_stock].copy()
-                stock_owners = stock_owners.sort_values('Jumlah Saham (Curr)', ascending=False)
-                st.dataframe(
-                    stock_owners[['Nama Pemegang Saham', 'Kode Broker', 'Jumlah Saham (Curr)']],
-                    column_config={"Jumlah Saham (Curr)": st.column_config.NumberColumn("Lembar Saham", format="%d")},
-                    hide_index=True, use_container_width=True
-                )
-
-# ==================== TAB 5: MARKET MAP ====================
-with tabs[4]:
-    st.markdown("### 🗺️ Sectoral Market Heatmap & Foreign Flow")
+    start_mutasi = df_kepemilikan['Tanggal_Data'].max() - timedelta(days=days_map[mutasi_period])
+    df_ksei_period = df_kepemilikan[df_kepemilikan['Tanggal_Data'] >= start_mutasi].copy()
     
-    today_data = df_transaksi[df_transaksi['Last Trading Date'].dt.date == max_date].copy()
-    if len(today_data) > 0:
+    if not df_ksei_period.empty:
+        mutasi = df_ksei_period.sort_values('Tanggal_Data').groupby(['Kode Broker', 'Kode Efek']).agg(
+            Awal=('Jumlah Saham (Curr)', 'first'),
+            Akhir=('Jumlah Saham (Curr)', 'last')
+        ).reset_index()
         
-        # IMPROVEMENT: TREEMAP FOREIGN FLOW PER SECTOR
-        if 'Sector' in today_data.columns:
-            st.markdown("#### 🏢 Foreign Flow per Sector (Treemap)")
-            sector_perf = today_data.groupby(['Sector', 'Stock Code']).agg({
-                'Net Foreign Flow': 'sum',
-                'Value': 'sum',
-                'Change %': 'mean'
-            }).reset_index()
-            
-            # Filter saham yang ada transaksinya saja
-            sector_perf = sector_perf[sector_perf['Value'] > 0]
-            
-            # Gunakan Absolute Value untuk ukuran box, warna untuk arah Foreign Flow
-            sector_perf['Abs_Value'] = sector_perf['Value']
-            
-            fig_tree = px.treemap(
-                sector_perf, 
-                path=[px.Constant("IHSG"), 'Sector', 'Stock Code'], 
-                values='Abs_Value',
-                color='Net Foreign Flow', 
-                color_continuous_scale='RdYlGn',
-                color_continuous_midpoint=0,
-                hover_data=['Change %']
-            )
-            fig_tree.update_layout(height=600, margin=dict(t=20, l=0, r=0, b=0))
-            st.plotly_chart(fig_tree, use_container_width=True)
+        mutasi['Net_Change'] = mutasi['Akhir'] - mutasi['Awal']
+        broker_summary = mutasi.groupby('Kode Broker')['Net_Change'].sum().reset_index()
         
+        top_acc = broker_summary.nlargest(10, 'Net_Change')
+        top_dist = broker_summary.nsmallest(10, 'Net_Change')
+        top_dist['Net_Change'] = abs(top_dist['Net_Change'])
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### 🟢 Top Accumulator")
+            fig_acc = px.bar(top_acc, x='Net_Change', y='Kode Broker', orientation='h', color_discrete_sequence=['#00c853'])
+            fig_acc.update_layout(xaxis=dict(tickformat=",.0f")) # Format koma di chart
+            st.plotly_chart(fig_acc, use_container_width=True)
+        with c2:
+            st.markdown("#### 🔴 Top Distributor")
+            fig_dist = px.bar(top_dist, x='Net_Change', y='Kode Broker', orientation='h', color_discrete_sequence=['#ff3d00'])
+            fig_dist.update_layout(xaxis=dict(tickformat=",.0f"))
+            st.plotly_chart(fig_dist, use_container_width=True)
+            
         st.divider()
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            st.markdown("#### 🟢 Top Foreign Buy (Hari Ini)")
-            top_fb = today_data.nlargest(10, 'Net Foreign Flow')[['Stock Code', 'Close', 'Change %', 'Net Foreign Flow']]
-            st.dataframe(top_fb.style.format({'Close': '{:,.0f}', 'Change %': '{:+.2f}%', 'Net Foreign Flow': lambda x: f"Rp {x/1e9:.1f} M"}), hide_index=True, use_container_width=True)
-            
-        with col_m2:
-            st.markdown("#### 🔴 Top Foreign Sell (Hari Ini)")
-            top_fs = today_data.nsmallest(10, 'Net Foreign Flow')[['Stock Code', 'Close', 'Change %', 'Net Foreign Flow']]
-            st.dataframe(top_fs.style.format({'Close': '{:,.0f}', 'Change %': '{:+.2f}%', 'Net Foreign Flow': lambda x: f"Rp {x/1e9:.1f} M"}), hide_index=True, use_container_width=True)
+        st.markdown("#### 🔎 Detail Mutasi")
+        sel_broker = st.selectbox("Pilih Broker", sorted(broker_summary['Kode Broker'].unique()), key='m_broker')
+        detail = mutasi[(mutasi['Kode Broker'] == sel_broker) & (mutasi['Net_Change'] != 0)].sort_values('Net_Change', ascending=False)
+        
+        st.dataframe(
+            detail,
+            column_config={"Net_Change": st.column_config.NumberColumn("Net Mutasi (Lembar)", format="%+d")},
+            use_container_width=True, hide_index=True
+        )
 
+# ==================== TAB 4: MARKET MAP & FOREIGN ====================
+with tabs[3]:
+    st.markdown("### 🗺️ Market Flow & Foreign Radar")
+    
+    # 1. Foreign Flow Timeframe Selector
+    st.markdown("#### 🌍 Top Foreign Flow (Multi-Timeframe)")
+    ff_period = st.selectbox("Rentang Waktu Foreign Flow", ["Hari Ini", "5 Hari", "10 Hari", "20 Hari", "30 Hari", "60 Hari"], key='ff_time')
+    
+    # Logic Filter Data
+    days_ff_map = {"Hari Ini": 0, "5 Hari": 5, "10 Hari": 10, "20 Hari": 20, "30 Hari": 30, "60 Hari": 60}
+    days_back = days_ff_map[ff_period]
+    
+    start_date_ff = max_date - timedelta(days=days_back)
+    
+    # Filter Data Transaksi
+    if days_back == 0:
+        # Data Hari Terakhir Saja
+        ff_data = df_transaksi[df_transaksi['Last Trading Date'].dt.date == max_date].copy()
     else:
-        st.warning(f"Belum ada data transaksi untuk tanggal {max_date.strftime('%d-%m-%Y')}")
+        # Agregasi Range Tanggal
+        mask_ff = (df_transaksi['Last Trading Date'].dt.date >= start_date_ff) & (df_transaksi['Last Trading Date'].dt.date <= max_date)
+        ff_data = df_transaksi[mask_ff].groupby('Stock Code').agg({
+            'Net Foreign Flow': 'sum',
+            'Value': 'sum',
+            'Close': 'last',
+            'Change %': 'mean' # Rata-rata change
+        }).reset_index()
+    
+    if not ff_data.empty:
+        col_f1, col_f2 = st.columns(2)
+        
+        with col_f1:
+            st.markdown(f"#### 🟢 Top Foreign Buy ({ff_period})")
+            top_buy = ff_data.nlargest(20, 'Net Foreign Flow')
+            st.dataframe(
+                top_buy[['Stock Code', 'Close', 'Net Foreign Flow']],
+                column_config={
+                    "Close": st.column_config.NumberColumn("Harga", format="Rp %d"),
+                    "Net Foreign Flow": st.column_config.NumberColumn("Net Buy", format="Rp %,d")
+                },
+                hide_index=True, use_container_width=True, height=500
+            )
+            
+        with col_f2:
+            st.markdown(f"#### 🔴 Top Foreign Sell ({ff_period})")
+            top_sell = ff_data.nsmallest(20, 'Net Foreign Flow')
+            st.dataframe(
+                top_sell[['Stock Code', 'Close', 'Net Foreign Flow']],
+                column_config={
+                    "Close": st.column_config.NumberColumn("Harga", format="Rp %d"),
+                    "Net Foreign Flow": st.column_config.NumberColumn("Net Sell", format="Rp %,d")
+                },
+                hide_index=True, use_container_width=True, height=500
+            )
+    else:
+        st.warning("Tidak ada data transaksi untuk rentang waktu ini.")
 
+# Footer
 st.markdown("---")
-st.caption(f"🔄 Last Update: {max_date.strftime('%d %b %Y')} | Data Loaded Successfully.")
+st.caption(f"Last Update: {max_date} | Bandarmology Master V3")    
