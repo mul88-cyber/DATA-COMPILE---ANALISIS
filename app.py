@@ -156,11 +156,16 @@ with tabs[0]:
                 height=600,
                 column_config={
                     "Stock Code": st.column_config.TextColumn("Kode", width="small"),
-                    "Close": st.column_config.NumberColumn("Harga", format="%d"), # Format integer basic
+                    "Close": st.column_config.NumberColumn("Harga", format="Rp %,d"), # Format integer dengan koma
                     "Change %": st.column_config.NumberColumn("Avg Chg%", format="%.2f%%"),
-                    "Value": st.column_config.NumberColumn("Total Value", format="Rp %,d"), # Koma separator
-                    "Net Foreign Flow": st.column_config.NumberColumn("Net Foreign", format="Rp %,d"), # Koma separator
-                    "Volume_Pct_Tradeble": st.column_config.ProgressColumn("Vol % Tradeble", format="%.2f%%", min_value=0, max_value=max(summary['Volume_Pct_Tradeble'].max(), 1)),
+                    "Value": st.column_config.NumberColumn("Total Value", format="Rp %,.0f"), # Koma separator aman untuk float
+                    "Net Foreign Flow": st.column_config.NumberColumn("Net Foreign", format="Rp %,.0f"), # Koma separator aman untuk float
+                    "Volume_Pct_Tradeble": st.column_config.ProgressColumn(
+                        "Vol % Tradeble", 
+                        format="%.2f%%", 
+                        min_value=0, 
+                        max_value=float(max(summary['Volume_Pct_Tradeble'].max(), 1)) # FIX: Convert numpy to float
+                    ),
                     "Big_Player_Anomaly": st.column_config.NumberColumn("Max Anomali (x)", format="%.1f"),
                     "Inst_Score": st.column_config.NumberColumn("Score", format="%.1f")
                 },
@@ -425,4 +430,4 @@ with tabs[3]:
 
 # Footer
 st.markdown("---")
-st.caption(f"Last Update: {max_date} | Bandarmology Master V3")    
+st.caption(f"Last Update: {max_date} | Bandarmology Master V3")
