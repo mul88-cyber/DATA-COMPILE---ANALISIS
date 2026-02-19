@@ -129,16 +129,32 @@ df_kepemilikan = df_kepemilikan.dropna(subset=['Tanggal_Data', 'Kode Efek'])
 # Konversi numerik
 numeric_cols = ['Volume', 'Value', 'Foreign Buy', 'Foreign Sell', 'Net Foreign Flow', 
                 'Big_Player_Anomaly', 'Close', 'Volume Spike (x)', 'Avg_Order_Volume',
-                'Tradeble Shares', 'Free Float', 'Typical Price', 'TPxV']
+                'Tradeble Shares', 'Free Float', 'Typical Price', 'TPxV', 'Frequency',
+                'Previous', 'Open Price', 'High', 'Low']
 for col in numeric_cols:
     if col in df_transaksi.columns:
         df_transaksi[col] = pd.to_numeric(df_transaksi[col], errors='coerce').fillna(0)
 
-# Hitung metrik tambahan
-df_transaksi['Foreign_Pct'] = ((df_transaksi['Foreign Buy'] - df_transaksi['Foreign Sell']) / 
-                               df_transaksi['Tradeble Shares'].replace(0, np.nan) * 100).fillna(0)
-df_transaksi['Volume_Pct_Tradeble'] = (df_transaksi['Volume'] / df_transaksi['Tradeble Shares'].replace(0, np.nan) * 100).fillna(0)
-df_transaksi['Value_Per_Order'] = (df_transaksi['Value'] / df_transaksi['Frequency']).fillna(0) if 'Frequency' in df_transaksi.columns else 0
+# Hitung metrik tambahan dengan aman
+df_transaksi['Foreign_Pct'] = 0
+df_transaksi['Volume_Pct_Tradeble'] = 0
+df_transaksi['Value_Per_Order'] = 0
+
+if 'Tradeble Shares' in df_transaksi.columns:
+    mask_tradeble = df_transaksi['Tradeble Shares'] > 0
+    df_transaksi.loc[mask_tradeble, 'Foreign_Pct'] = (
+        (df_transaksi.loc[mask_tradeble, 'Foreign Buy'] - df_transaksi.loc[mask_tradeble, 'Foreign Sell']) / 
+        df_transaksi.loc[mask_tradeble, 'Tradeble Shares'] * 100
+    )
+    df_transaksi.loc[mask_tradeble, 'Volume_Pct_Tradeble'] = (
+        df_transaksi.loc[mask_tradeble, 'Volume'] / df_transaksi.loc[mask_tradeble, 'Tradeble Shares'] * 100
+    )
+
+if 'Frequency' in df_transaksi.columns:
+    mask_freq = df_transaksi['Frequency'] > 0
+    df_transaksi.loc[mask_freq, 'Value_Per_Order'] = (
+        df_transaksi.loc[mask_freq, 'Value'] / df_transaksi.loc[mask_freq, 'Frequency']
+    )
 
 # Data siap
 unique_stocks = sorted(df_transaksi['Stock Code'].unique())
@@ -181,7 +197,7 @@ with tabs[0]:
         
         row2 = st.columns(4)
         with row2[0]:
-            min_price = st.number_input("Min Harga", 0, 10000, 50)
+            min_price = st.number_input("Min Harga", 0, 100000, 50)
         with row2[1]:
             min_foreign_pct = st.slider("Min Foreign % Change", -10.0, 10.0, -1.0, 0.1, format="%.1f%%")
         with row2[2]:
@@ -200,8 +216,8 @@ with tabs[0]:
         df_filter = df_transaksi[mask].copy()
         
         if len(df_filter) > 0:
-            # Agregasi dengan metrik lengkap
-            summary = df_filter.groupby('Stock Code').agg({
+            # Siapkan dictionary untuk agregasi
+            agg_dict = {
                 'Close': 'last',
                 'Change %': 'last',
                 'Volume': 'sum',
@@ -209,22 +225,43 @@ with tabs[0]:
                 'Net Foreign Flow': 'sum',
                 'Big_Player_Anomaly': 'max',
                 'Volume Spike (x)': 'max',
-                'Volume_Pct_Tradeble': 'mean',
-                'Foreign_Pct': 'mean',
                 'Tradeble Shares': 'last',
                 'Free Float': 'last',
                 'Avg_Order_Volume': 'mean',
                 'Typical Price': 'mean',
                 'TPxV': 'sum'
-            }).reset_index()
+            }
             
-            # Hitung potensi terbang
-            summary['Buying_Pressure'] = (summary['Net Foreign Flow'] / summary['Value'].replace(0, np.nan) * 100).fillna(0)
-            summary['Volume_Concentration'] = (summary['Volume'] / summary['Tradeble Shares'].replace(0, np.nan) * 100).fillna(0)
+            # Tambahkan kolom yang mungkin ada
+            if 'Volume_Pct_Tradeble' in df_filter.columns:
+                agg_dict['Volume_Pct_Tradeble'] = 'mean'
+            if 'Foreign_Pct' in df_filter.columns:
+                agg_dict['Foreign_Pct'] = 'mean'
+            
+            summary = df_filter.groupby('Stock Code').agg(agg_dict).reset_index()
+            
+            # Hitung metrik turunan dengan aman
+            summary['Buying_Pressure'] = 0
+            summary['Volume_Concentration'] = 0
+            summary['Anomaly_Score'] = 0
+            summary['Potential_Score'] = 0
+            
+            mask_value = summary['Value'] > 0
+            summary.loc[mask_value, 'Buying_Pressure'] = (
+                summary.loc[mask_value, 'Net Foreign Flow'] / summary.loc[mask_value, 'Value'] * 100
+            ).fillna(0)
+            
+            mask_tradeble = summary['Tradeble Shares'] > 0
+            summary.loc[mask_tradeble, 'Volume_Concentration'] = (
+                summary.loc[mask_tradeble, 'Volume'] / summary.loc[mask_tradeble, 'Tradeble Shares'] * 100
+            ).fillna(0)
+            
             summary['Anomaly_Score'] = summary['Big_Player_Anomaly'] * summary['Volume Spike (x)']
-            summary['Potential_Score'] = (summary['Volume_Concentration'] * 0.3 + 
-                                          abs(summary['Buying_Pressure']) * 0.3 + 
-                                          summary['Anomaly_Score'] * 0.4)
+            summary['Potential_Score'] = (
+                summary['Volume_Concentration'] * 0.3 + 
+                abs(summary['Buying_Pressure']) * 0.3 + 
+                summary['Anomaly_Score'] * 0.4
+            )
             
             # Apply filters
             summary = summary[summary['Value'] >= min_value]
@@ -236,9 +273,9 @@ with tabs[0]:
                 summary = summary[summary['Net Foreign Flow'] > 1e9]
             elif foreign_filter == "Net Sell > 1M":
                 summary = summary[summary['Net Foreign Flow'] < -1e9]
-            elif foreign_filter == "Net Buy Kuat":
+            elif foreign_filter == "Net Buy Kuat" and 'Foreign_Pct' in summary.columns:
                 summary = summary[summary['Foreign_Pct'] > 2]
-            elif foreign_filter == "Net Sell Kuat":
+            elif foreign_filter == "Net Sell Kuat" and 'Foreign_Pct' in summary.columns:
                 summary = summary[summary['Foreign_Pct'] < -2]
             
             # Sort
@@ -249,7 +286,8 @@ with tabs[0]:
                 "Foreign Flow": "Net Foreign Flow",
                 "Volume Spike": "Volume Spike (x)"
             }
-            summary = summary.sort_values(sort_map[sort_by], ascending=False)
+            if sort_by in sort_map and sort_map[sort_by] in summary.columns:
+                summary = summary.sort_values(sort_map[sort_by], ascending=False)
             
             if top_only:
                 summary = summary.head(50)
@@ -257,59 +295,67 @@ with tabs[0]:
             # Display
             st.markdown(f"**🎯 {len(summary)} saham ditemukan dengan potensi tinggi**")
             
-            # Format untuk display
-            display = summary.copy()
-            display['Value'] = (display['Value'] / 1e9).round(1)
-            display['Net Foreign Flow'] = (display['Net Foreign Flow'] / 1e9).round(1)
-            display['Volume_Concentration'] = display['Volume_Concentration'].round(2)
-            display['Buying_Pressure'] = display['Buying_Pressure'].round(1)
-            display['Potential_Score'] = display['Potential_Score'].round(1)
-            display['Change %'] = display['Change %'].round(2)
-            
-            # Select columns
-            cols_display = ['Stock Code', 'Close', 'Change %', 'Value', 'Net Foreign Flow', 
-                           'Volume_Concentration', 'Buying_Pressure', 'Anomaly_Score', 
-                           'Volume Spike (x)', 'Potential_Score']
-            
-            display = display[[c for c in cols_display if c in display.columns]]
-            display.columns = ['Kode', 'Harga', 'Change%', 'Nilai(M)', 'Foreign(M)', 
-                              'Vol%Tradeble', 'Pressure%', 'Anomali', 'Spike', 'Potensi']
-            
-            # Color coding
-            def highlight_potential(val):
-                try:
-                    if float(val) > 20: return 'background-color: #ffeb3b; font-weight: bold'
-                    elif float(val) > 10: return 'background-color: #cddc39'
-                except: pass
-                return ''
-            
-            st.dataframe(
-                display.style.applymap(highlight_potential, subset=['Potensi'])
-                        .applymap(lambda x: 'color: green' if x > 0 else 'color: red' if x < 0 else '', subset=['Change%', 'Foreign(M)']),
-                use_container_width=True,
-                height=500
-            )
-            
-            # Visualisasi potensi
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                fig = px.scatter(summary.head(20), x='Volume_Concentration', y='Net Foreign Flow',
-                               size='Potential_Score', color='Change %',
-                               hover_data=['Stock Code'],
-                               title="Volume Concentration vs Foreign Flow",
-                               labels={'Volume_Concentration': 'Volume % Tradeble', 
-                                      'Net Foreign Flow': 'Net Foreign (Rp)'})
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                top_potential = summary.nlargest(15, 'Potential_Score')[['Stock Code', 'Potential_Score']]
-                fig = px.bar(top_potential, x='Stock Code', y='Potential_Score',
-                           title="Top 15 Highest Potential Stocks",
-                           color='Potential_Score', color_continuous_scale='Viridis')
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
+            if len(summary) > 0:
+                # Format untuk display
+                display = summary.copy()
+                display['Value'] = (display['Value'] / 1e9).round(1)
+                display['Net Foreign Flow'] = (display['Net Foreign Flow'] / 1e9).round(1)
+                display['Volume_Concentration'] = display['Volume_Concentration'].round(2)
+                display['Buying_Pressure'] = display['Buying_Pressure'].round(1)
+                display['Potential_Score'] = display['Potential_Score'].round(1)
+                if 'Change %' in display.columns:
+                    display['Change %'] = display['Change %'].round(2)
+                
+                # Select columns
+                cols_display = ['Stock Code', 'Close', 'Change %', 'Value', 'Net Foreign Flow', 
+                               'Volume_Concentration', 'Buying_Pressure', 'Anomaly_Score', 
+                               'Volume Spike (x)', 'Potential_Score']
+                
+                available_cols = [c for c in cols_display if c in display.columns]
+                display = display[available_cols]
+                
+                # Rename columns
+                col_names = {
+                    'Stock Code': 'Kode',
+                    'Close': 'Harga',
+                    'Change %': 'Change%',
+                    'Value': 'Nilai(M)',
+                    'Net Foreign Flow': 'Foreign(M)',
+                    'Volume_Concentration': 'Vol%Tradeble',
+                    'Buying_Pressure': 'Pressure%',
+                    'Anomaly_Score': 'Anomali',
+                    'Volume Spike (x)': 'Spike',
+                    'Potential_Score': 'Potensi'
+                }
+                display = display.rename(columns={k: v for k, v in col_names.items() if k in display.columns})
+                
+                st.dataframe(display, use_container_width=True, height=500)
+                
+                # Visualisasi
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if len(summary) > 0 and 'Volume_Concentration' in summary.columns and 'Net Foreign Flow' in summary.columns:
+                        fig = px.scatter(summary.head(20), x='Volume_Concentration', y='Net Foreign Flow',
+                                       size='Potential_Score' if 'Potential_Score' in summary.columns else None, 
+                                       color='Change %' if 'Change %' in summary.columns else None,
+                                       hover_data=['Stock Code'],
+                                       title="Volume Concentration vs Foreign Flow")
+                        fig.update_layout(height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                with col2:
+                    if 'Potential_Score' in summary.columns:
+                        top_potential = summary.nlargest(15, 'Potential_Score')[['Stock Code', 'Potential_Score']]
+                        fig = px.bar(top_potential, x='Stock Code', y='Potential_Score',
+                                   title="Top 15 Highest Potential Stocks",
+                                   color='Potential_Score', color_continuous_scale='Viridis')
+                        fig.update_layout(height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("Tidak ada saham yang memenuhi kriteria")
+        else:
+            st.warning("Tidak ada data untuk periode yang dipilih")
 
 # ==================== TAB 2: DEEP DIVE ====================
 with tabs[1]:
@@ -331,9 +377,9 @@ with tabs[1]:
     
     if len(df_dive) > 0:
         latest = df_dive.iloc[-1]
-        tradeble = latest['Tradeble Shares'] if vs_tradeble else 1
+        tradeble = latest['Tradeble Shares'] if vs_tradeble and latest['Tradeble Shares'] > 0 else 1
         
-        # METRICS KOMPREHENSIF
+        # METRICS
         cols = st.columns(6)
         
         with cols[0]:
@@ -351,7 +397,7 @@ with tabs[1]:
             foreign_pct = (latest['Net Foreign Flow'] / tradeble * 100) if tradeble > 0 else 0
             st.metric("Foreign % Tradeble", f"{foreign_pct:.3f}%")
         
-        # CHART 4 ROW
+        # CHART
         fig = make_subplots(
             rows=4, cols=1,
             shared_xaxes=True,
@@ -374,9 +420,13 @@ with tabs[1]:
             row=1, col=1
         )
         
-        # Volume dengan normalisasi
-        volume_data = df_dive['Volume'] / tradeble * 100 if vs_tradeble else df_dive['Volume'] / 1e6
-        volume_title = "Volume % Tradeble" if vs_tradeble else "Volume (Jt)"
+        # Volume
+        if vs_tradeble and tradeble > 0:
+            volume_data = df_dive['Volume'] / tradeble * 100
+            volume_title = "Volume % Tradeble"
+        else:
+            volume_data = df_dive['Volume'] / 1e6
+            volume_title = "Volume (Jt)"
         
         colors = ['red' if row['Close'] < row['Open Price'] else 'green' for _, row in df_dive.iterrows()]
         fig.add_trace(
@@ -402,7 +452,7 @@ with tabs[1]:
             row=3, col=1
         )
         
-        # Big Player Anomaly + Volume Spike
+        # Big Player Anomaly
         fig.add_trace(
             go.Scatter(
                 x=df_dive['Last Trading Date'],
@@ -414,15 +464,16 @@ with tabs[1]:
             row=4, col=1
         )
         
-        fig.add_trace(
-            go.Scatter(
-                x=df_dive['Last Trading Date'],
-                y=df_dive['Volume Spike (x)'],
-                name="Volume Spike",
-                line=dict(color='orange', width=2, dash='dash')
-            ),
-            row=4, col=1
-        )
+        if 'Volume Spike (x)' in df_dive.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=df_dive['Last Trading Date'],
+                    y=df_dive['Volume Spike (x)'],
+                    name="Volume Spike",
+                    line=dict(color='orange', width=2, dash='dash')
+                ),
+                row=4, col=1
+            )
         
         fig.update_layout(
             height=700,
@@ -438,66 +489,61 @@ with tabs[1]:
         
         st.plotly_chart(fig, use_container_width=True)
         
-        # ANALISIS KEPEMILIKAN dari KSEI
-        if len(df_kepemilikan) > 0:
+        # KSEI Ownership
+        if len(df_kepemilikan) > 0 and 'Kode Efek' in df_kepemilikan.columns:
             st.markdown("### 👥 Institutional Ownership")
             
-            # Data kepemilikan terbaru
-            latest_ksei = df_kepemilikan[df_kepemilikan['Kode Efek'] == selected_stock]['Tanggal_Data'].max()
-            if pd.notna(latest_ksei):
-                ksei_data = df_kepemilikan[(df_kepemilikan['Kode Efek'] == selected_stock) & 
-                                          (df_kepemilikan['Tanggal_Data'] == latest_ksei)]
+            ksei_data = df_kepemilikan[df_kepemilikan['Kode Efek'] == selected_stock].copy()
+            if len(ksei_data) > 0:
+                latest_ksei = ksei_data['Tanggal_Data'].max()
+                ksei_latest = ksei_data[ksei_data['Tanggal_Data'] == latest_ksei]
                 
-                total_owned = ksei_data['Jumlah Saham (Curr)'].sum()
+                total_owned = ksei_latest['Jumlah Saham (Curr)'].sum()
                 pct_owned = (total_owned / tradeble * 100) if tradeble > 0 else 0
                 
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Total 5% Holders", f"{total_owned/1e6:.1f}Jt")
                 col2.metric("% dari Tradeble", f"{pct_owned:.2f}%")
-                col3.metric("Jumlah Holder", len(ksei_data))
+                col3.metric("Jumlah Holder", len(ksei_latest))
                 
-                # Top holders by broker
-                broker_summary = ksei_data.groupby('Kode Broker').agg({
-                    'Jumlah Saham (Curr)': 'sum',
-                    'Nama Pemegang Saham': 'count'
-                }).rename(columns={
-                    'Jumlah Saham (Curr)': 'Total Saham',
-                    'Nama Pemegang Saham': 'Jumlah Holder'
-                }).reset_index()
-                
-                broker_summary['Total Saham'] = broker_summary['Total Saham'] / 1e6
-                broker_summary['% Tradeble'] = (broker_summary['Total Saham'] * 1e6 / tradeble * 100).round(2)
-                broker_summary = broker_summary.sort_values('Total Saham', ascending=False)
-                
-                st.dataframe(broker_summary, use_container_width=True)
+                if 'Kode Broker' in ksei_latest.columns:
+                    broker_summary = ksei_latest.groupby('Kode Broker').agg({
+                        'Jumlah Saham (Curr)': 'sum',
+                        'Nama Pemegang Saham': 'count'
+                    }).rename(columns={
+                        'Jumlah Saham (Curr)': 'Total Saham',
+                        'Nama Pemegang Saham': 'Jumlah Holder'
+                    }).reset_index()
+                    
+                    broker_summary['Total Saham'] = broker_summary['Total Saham'] / 1e6
+                    if tradeble > 0:
+                        broker_summary['% Tradeble'] = (broker_summary['Total Saham'] * 1e6 / tradeble * 100).round(2)
+                    broker_summary = broker_summary.sort_values('Total Saham', ascending=False)
+                    
+                    st.dataframe(broker_summary, use_container_width=True)
         
-        # TRADING SIGNALS
+        # SIGNALS
         st.markdown("### 🚨 Trading Signals")
         
         signals = []
         
-        # Volume analysis
         if latest['Volume Spike (x)'] > 2:
             signals.append(("🔴 Volume Spike", f"{latest['Volume Spike (x)']:.1f}x normal"))
         
         if vs_tradeble and vol_pct > 5:
             signals.append(("📊 High Volume", f"{vol_pct:.2f}% of tradeble"))
         
-        # Anomaly
         if latest['Big_Player_Anomaly'] > 5:
             signals.append(("🐋 Strong Anomaly", f"{latest['Big_Player_Anomaly']:.1f}x avg order"))
         
-        # Foreign
         if latest['Net Foreign Flow'] > 1e9:
             signals.append(("🟢 Big Foreign Buy", f"Rp{latest['Net Foreign Flow']/1e9:.1f}M"))
         elif latest['Net Foreign Flow'] < -1e9:
             signals.append(("🔴 Big Foreign Sell", f"Rp{abs(latest['Net Foreign Flow']/1e9):.1f}M"))
         
-        # Ownership concentration
-        if vs_tradeble and pct_owned > 20:
+        if vs_tradeble and tradeble > 0 and 'pct_owned' in locals() and pct_owned > 20:
             signals.append(("👑 High Concentration", f"{pct_owned:.1f}% owned by 5% holders"))
         
-        # Price momentum
         if len(df_dive) > 5:
             ma5 = df_dive['Close'].tail(5).mean()
             if latest['Close'] > ma5 * 1.07:
@@ -524,7 +570,7 @@ with tabs[2]:
         col1, col2 = st.columns([1, 2])
         
         with col1:
-            # Top brokers by holdings
+            # Top brokers
             broker_power = df_kepemilikan.groupby('Kode Broker').agg({
                 'Jumlah Saham (Curr)': 'sum',
                 'Nama Pemegang Saham': 'nunique',
@@ -542,41 +588,42 @@ with tabs[2]:
             st.dataframe(broker_power, use_container_width=True)
         
         with col2:
-            # Broker concentration by stock
-            selected_broker = st.selectbox("Analisis Broker", broker_power['Kode Broker'].head(10))
-            
-            if selected_broker:
-                broker_stocks = df_kepemilikan[df_kepemilikan['Kode Broker'] == selected_broker].copy()
-                broker_stocks = broker_stocks.groupby('Kode Efek').agg({
-                    'Jumlah Saham (Curr)': 'sum',
-                    'Nama Pemegang Saham': 'count'
-                }).rename(columns={
-                    'Jumlah Saham (Curr)': 'Total Saham',
-                    'Nama Pemegang Saham': 'Jumlah Holder'
-                }).reset_index()
+            if len(broker_power) > 0:
+                selected_broker = st.selectbox("Analisis Broker", broker_power['Kode Broker'].head(10).tolist())
                 
-                broker_stocks['Total Saham'] = broker_stocks['Total Saham'] / 1e6
-                broker_stocks = broker_stocks.sort_values('Total Saham', ascending=False).head(15)
-                
-                fig = px.bar(broker_stocks, x='Kode Efek', y='Total Saham',
-                           title=f"Top Holdings - Broker {selected_broker}",
-                           color='Total Saham', color_continuous_scale='Blues')
-                st.plotly_chart(fig, use_container_width=True)
+                if selected_broker:
+                    broker_stocks = df_kepemilikan[df_kepemilikan['Kode Broker'] == selected_broker].copy()
+                    broker_stocks = broker_stocks.groupby('Kode Efek').agg({
+                        'Jumlah Saham (Curr)': 'sum',
+                        'Nama Pemegang Saham': 'count'
+                    }).rename(columns={
+                        'Jumlah Saham (Curr)': 'Total Saham',
+                        'Nama Pemegang Saham': 'Jumlah Holder'
+                    }).reset_index()
+                    
+                    broker_stocks['Total Saham'] = broker_stocks['Total Saham'] / 1e6
+                    broker_stocks = broker_stocks.sort_values('Total Saham', ascending=False).head(15)
+                    
+                    if len(broker_stocks) > 0:
+                        fig = px.bar(broker_stocks, x='Kode Efek', y='Total Saham',
+                                   title=f"Top Holdings - Broker {selected_broker}",
+                                   color='Total Saham', color_continuous_scale='Blues')
+                        st.plotly_chart(fig, use_container_width=True)
         
-        # Broker activity timeline
+        # Timeline
         st.markdown("#### 📈 Broker Activity Timeline")
         
-        # Pilih beberapa broker top untuk timeline
-        top_brokers = broker_power.head(5)['Kode Broker'].tolist()
-        timeline_data = df_kepemilikan[df_kepemilikan['Kode Broker'].isin(top_brokers)].copy()
-        timeline_data = timeline_data.groupby(['Tanggal_Data', 'Kode Broker'])['Jumlah Saham (Curr)'].sum().reset_index()
-        timeline_data['Jumlah Saham (Curr)'] = timeline_data['Jumlah Saham (Curr)'] / 1e9
-        
-        fig = px.line(timeline_data, x='Tanggal_Data', y='Jumlah Saham (Curr)',
-                     color='Kode Broker', title="Top Brokers Holdings Timeline (Rp Miliar)",
-                     markers=True)
-        st.plotly_chart(fig, use_container_width=True)
-        
+        if len(broker_power) > 0:
+            top_brokers = broker_power.head(5)['Kode Broker'].tolist()
+            timeline_data = df_kepemilikan[df_kepemilikan['Kode Broker'].isin(top_brokers)].copy()
+            if len(timeline_data) > 0:
+                timeline_data = timeline_data.groupby(['Tanggal_Data', 'Kode Broker'])['Jumlah Saham (Curr)'].sum().reset_index()
+                timeline_data['Jumlah Saham (Curr)'] = timeline_data['Jumlah Saham (Curr)'] / 1e9
+                
+                fig = px.line(timeline_data, x='Tanggal_Data', y='Jumlah Saham (Curr)',
+                             color='Kode Broker', title="Top Brokers Holdings Timeline (Rp Miliar)",
+                             markers=True)
+                st.plotly_chart(fig, use_container_width=True)
     else:
         st.warning("Data broker tidak tersedia")
 
@@ -592,64 +639,93 @@ with tabs[3]:
             latest_date = df_kepemilikan['Tanggal_Data'].max()
             latest_ownership = df_kepemilikan[df_kepemilikan['Tanggal_Data'] == latest_date].copy()
             
-            # Gabung dengan tradeble shares
-            tradeble_info = df_transaksi[df_transaksi['Last Trading Date'].dt.date == max_date][['Stock Code', 'Tradeble Shares']].drop_duplicates('Stock Code')
-            
-            if len(tradeble_info) > 0:
-                concentration = latest_ownership.groupby('Kode Efek')['Jumlah Saham (Curr)'].sum().reset_index()
-                concentration = concentration.merge(tradeble_info, left_on='Kode Efek', right_on='Stock Code', how='left')
-                concentration['Pct_of_Tradeble'] = (concentration['Jumlah Saham (Curr)'] / concentration['Tradeble Shares'] * 100).round(2)
-                concentration = concentration.sort_values('Pct_of_Tradeble', ascending=False).head(20)
+            if len(latest_ownership) > 0:
+                # Gabung dengan tradeble shares
+                tradeble_info = df_transaksi[df_transaksi['Last Trading Date'].dt.date == max_date][['Stock Code', 'Tradeble Shares']].drop_duplicates('Stock Code')
                 
-                st.markdown("#### 🎯 Highest Concentration Stocks")
-                
-                fig = px.bar(concentration, x='Kode Efek', y='Pct_of_Tradeble',
-                           title="% of Tradeble Shares Held by 5% Owners",
-                           color='Pct_of_Tradeble', color_continuous_scale='Reds')
-                st.plotly_chart(fig, use_container_width=True)
+                if len(tradeble_info) > 0:
+                    concentration = latest_ownership.groupby('Kode Efek')['Jumlah Saham (Curr)'].sum().reset_index()
+                    concentration = concentration.merge(tradeble_info, left_on='Kode Efek', right_on='Stock Code', how='left')
+                    
+                    # Hitung persentase dengan aman
+                    concentration['Pct_of_Tradeble'] = 0
+                    mask_tradeble = concentration['Tradeble Shares'] > 0
+                    concentration.loc[mask_tradeble, 'Pct_of_Tradeble'] = (
+                        concentration.loc[mask_tradeble, 'Jumlah Saham (Curr)'] / 
+                        concentration.loc[mask_tradeble, 'Tradeble Shares'] * 100
+                    ).round(2)
+                    
+                    concentration = concentration.sort_values('Pct_of_Tradeble', ascending=False).head(20)
+                    
+                    st.markdown("#### 🎯 Highest Concentration Stocks")
+                    
+                    fig = px.bar(concentration, x='Kode Efek', y='Pct_of_Tradeble',
+                               title="% of Tradeble Shares Held by 5% Owners",
+                               color='Pct_of_Tradeble', color_continuous_scale='Reds')
+                    st.plotly_chart(fig, use_container_width=True)
         
         with col2:
-            # Distribution of ownership
+            # Distribution
             st.markdown("#### 📊 Ownership Distribution")
             
-            ownership_stats = latest_ownership['Jumlah Saham (Curr)'].describe()
-            
-            fig = px.histogram(latest_ownership, x='Jumlah Saham (Curr)'/1e6,
-                             nbins=50, title="Distribution of Holdings Size (Juta)",
-                             labels={'x': 'Jumlah Saham (Juta)', 'y': 'Frequency'})
-            st.plotly_chart(fig, use_container_width=True)
+            if len(latest_ownership) > 0:
+                # PERBAIKAN: Hitung dalam juta dengan benar
+                ownership_values = latest_ownership['Jumlah Saham (Curr)'] / 1e6
+                
+                fig = px.histogram(
+                    x=ownership_values,
+                    nbins=50, 
+                    title="Distribution of Holdings Size (Juta Saham)",
+                    labels={'x': 'Jumlah Saham (Juta)', 'y': 'Frequency'}
+                )
+                st.plotly_chart(fig, use_container_width=True)
         
-        # Stock picker for deep ownership
+        # Stock picker
         st.markdown("#### 🔍 Stock Ownership Details")
         
-        own_stock = st.selectbox("Pilih Saham", sorted(latest_ownership['Kode Efek'].unique()), key='own_stock')
-        
-        if own_stock:
-            stock_owners = latest_ownership[latest_ownership['Kode Efek'] == own_stock].copy()
-            tradeble_value = tradeble_info[tradeble_info['Stock Code'] == own_stock]['Tradeble Shares'].values
-            tradeble_value = tradeble_value[0] if len(tradeble_value) > 0 else 1
+        if len(latest_ownership) > 0:
+            own_stock = st.selectbox("Pilih Saham", sorted(latest_ownership['Kode Efek'].unique()), key='own_stock')
             
-            stock_owners['% Tradeble'] = (stock_owners['Jumlah Saham (Curr)'] / tradeble_value * 100).round(3)
-            stock_owners['Jumlah Saham (Curr)'] = stock_owners['Jumlah Saham (Curr)'] / 1e6
-            
-            display_owners = stock_owners[['Nama Pemegang Saham', 'Kode Broker', 'Jumlah Saham (Curr)', '% Tradeble', 'Status']]
-            display_owners.columns = ['Pemegang Saham', 'Broker', 'Jumlah (Jt)', '% Tradeble', 'Status']
-            
-            st.dataframe(display_owners.sort_values('Jumlah (Jt)', ascending=False), use_container_width=True)
-            
-            # Hitung potensi terbang
-            total_concentration = display_owners['Jumlah (Jt)'].sum() * 1e6
-            pct_concentration = (total_concentration / tradeble_value * 100)
-            
-            st.markdown(f"""
-            <div class="signal-box" style="background: {'#ffeb3b' if pct_concentration > 30 else '#e3f2fd'}">
-                <strong>📊 Ownership Analysis:</strong><br>
-                - Total 5% Holdings: {total_concentration/1e6:.1f}Jt ({pct_concentration:.1f}% of tradeble)<br>
-                - Jumlah Major Holders: {len(stock_owners)}<br>
-                - Unique Brokers: {stock_owners['Kode Broker'].nunique()}<br>
-                - <strong>Potensi Terbang: {'TINGGI' if pct_concentration > 40 else 'SEDANG' if pct_concentration > 20 else 'RENDAH'}</strong>
-            </div>
-            """, unsafe_allow_html=True)
+            if own_stock:
+                stock_owners = latest_ownership[latest_ownership['Kode Efek'] == own_stock].copy()
+                
+                # Dapatkan tradeble value
+                tradeble_value = 1
+                if len(tradeble_info) > 0:
+                    tradeble_match = tradeble_info[tradeble_info['Stock Code'] == own_stock]['Tradeble Shares'].values
+                    tradeble_value = tradeble_match[0] if len(tradeble_match) > 0 and tradeble_match[0] > 0 else 1
+                
+                # Hitung metrik
+                stock_owners['% Tradeble'] = 0
+                if tradeble_value > 0:
+                    stock_owners['% Tradeble'] = (stock_owners['Jumlah Saham (Curr)'] / tradeble_value * 100).round(3)
+                
+                stock_owners['Jumlah Saham (Curr)'] = stock_owners['Jumlah Saham (Curr)'] / 1e6
+                
+                display_cols = ['Nama Pemegang Saham', 'Kode Broker', 'Jumlah Saham (Curr)', '% Tradeble', 'Status']
+                available_cols = [c for c in display_cols if c in stock_owners.columns]
+                display_owners = stock_owners[available_cols].copy()
+                
+                if 'Jumlah Saham (Curr)' in display_owners.columns:
+                    display_owners = display_owners.sort_values('Jumlah Saham (Curr)', ascending=False)
+                
+                display_owners.columns = [c.replace('_', ' ') for c in display_owners.columns]
+                
+                st.dataframe(display_owners, use_container_width=True)
+                
+                # Analisis konsentrasi
+                total_concentration = stock_owners['Jumlah Saham (Curr)'].sum() * 1e6
+                pct_concentration = (total_concentration / tradeble_value * 100) if tradeble_value > 0 else 0
+                
+                st.markdown(f"""
+                <div class="signal-box" style="background: {'#ffeb3b' if pct_concentration > 30 else '#e3f2fd'}">
+                    <strong>📊 Ownership Analysis:</strong><br>
+                    - Total 5% Holdings: {total_concentration/1e6:.1f}Jt ({pct_concentration:.1f}% of tradeble)<br>
+                    - Jumlah Major Holders: {len(stock_owners)}<br>
+                    - Unique Brokers: {stock_owners['Kode Broker'].nunique() if 'Kode Broker' in stock_owners.columns else 'N/A'}<br>
+                    - <strong>Potensi Terbang: {'TINGGI' if pct_concentration > 40 else 'SEDANG' if pct_concentration > 20 else 'RENDAH'}</strong>
+                </div>
+                """, unsafe_allow_html=True)
 
 # ==================== TAB 5: MARKET MAP ====================
 with tabs[4]:
@@ -683,7 +759,6 @@ with tabs[4]:
         col1, col2 = st.columns(2)
         
         with col1:
-            # Sector performance jika ada
             if 'Sector' in today_data.columns:
                 sector_perf = today_data.groupby('Sector').agg({
                     'Change %': 'mean',
@@ -716,20 +791,22 @@ with tabs[4]:
         with col1:
             st.markdown("#### 🚀 Top Gainers")
             gainers = today_data.nlargest(10, 'Change %')[['Stock Code', 'Close', 'Change %', 'Volume', 'Net Foreign Flow']].copy()
-            gainers['Change %'] = gainers['Change %'].round(2)
-            gainers['Volume'] = (gainers['Volume'] / 1e6).round(1)
-            gainers['Net Foreign Flow'] = (gainers['Net Foreign Flow'] / 1e9).round(1)
-            gainers.columns = ['Kode', 'Harga', 'Change%', 'Volume(Jt)', 'Foreign(M)']
-            st.dataframe(gainers, use_container_width=True)
+            if len(gainers) > 0:
+                gainers['Change %'] = gainers['Change %'].round(2)
+                gainers['Volume'] = (gainers['Volume'] / 1e6).round(1)
+                gainers['Net Foreign Flow'] = (gainers['Net Foreign Flow'] / 1e9).round(1)
+                gainers.columns = ['Kode', 'Harga', 'Change%', 'Volume(Jt)', 'Foreign(M)']
+                st.dataframe(gainers, use_container_width=True)
         
         with col2:
             st.markdown("#### 📉 Top Losers")
             losers = today_data.nsmallest(10, 'Change %')[['Stock Code', 'Close', 'Change %', 'Volume', 'Net Foreign Flow']].copy()
-            losers['Change %'] = losers['Change %'].round(2)
-            losers['Volume'] = (losers['Volume'] / 1e6).round(1)
-            losers['Net Foreign Flow'] = (losers['Net Foreign Flow'] / 1e9).round(1)
-            losers.columns = ['Kode', 'Harga', 'Change%', 'Volume(Jt)', 'Foreign(M)']
-            st.dataframe(losers, use_container_width=True)
+            if len(losers) > 0:
+                losers['Change %'] = losers['Change %'].round(2)
+                losers['Volume'] = (losers['Volume'] / 1e6).round(1)
+                losers['Net Foreign Flow'] = (losers['Net Foreign Flow'] / 1e9).round(1)
+                losers.columns = ['Kode', 'Harga', 'Change%', 'Volume(Jt)', 'Foreign(M)']
+                st.dataframe(losers, use_container_width=True)
         
         # Most Active & Anomaly
         col1, col2 = st.columns(2)
@@ -737,10 +814,11 @@ with tabs[4]:
         with col1:
             st.markdown("#### 💰 Most Active by Value")
             active = today_data.nlargest(10, 'Value')[['Stock Code', 'Close', 'Value', 'Volume']].copy()
-            active['Value'] = (active['Value'] / 1e9).round(1)
-            active['Volume'] = (active['Volume'] / 1e6).round(1)
-            active.columns = ['Kode', 'Harga', 'Nilai(M)', 'Volume(Jt)']
-            st.dataframe(active, use_container_width=True)
+            if len(active) > 0:
+                active['Value'] = (active['Value'] / 1e9).round(1)
+                active['Volume'] = (active['Volume'] / 1e6).round(1)
+                active.columns = ['Kode', 'Harga', 'Nilai(M)', 'Volume(Jt)']
+                st.dataframe(active, use_container_width=True)
         
         with col2:
             st.markdown("#### ⚡ Top Anomalies")
