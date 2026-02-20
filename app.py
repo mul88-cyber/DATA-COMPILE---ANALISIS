@@ -93,10 +93,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. FUNGSI LOAD DATA & PREPROCESSING
+# 2. FUNGSI LOAD DATA & PREPROCESSING (OPTIMIZED)
 # ==========================================
-@st.cache_data(ttl=3600)
-def load_data():
+@st.cache_data(ttl=3600, show_spinner="📊 Mengunduh & Memproses Data Market...")
+def load_and_preprocess_data():
     try:
         gcp_service_account = st.secrets["gcp_service_account"]
         credentials = service_account.Credentials.from_service_account_info(
@@ -112,53 +112,54 @@ def load_data():
         req_ksei = service.files().get_media(fileId="1PTr6XmBp6on-RNyaHC4mWpn6Y3vsR8xr")
         df_kepemilikan = pd.read_csv(io.BytesIO(req_ksei.execute()))
         
+        # --- PREPROCESSING DIMASUKKAN KE DALAM CACHE ---
+        # Konversi Tanggal
+        df_transaksi['Last Trading Date'] = pd.to_datetime(df_transaksi['Last Trading Date'].astype(str), errors='coerce')
+        df_kepemilikan['Tanggal_Data'] = pd.to_datetime(df_kepemilikan['Tanggal_Data'].astype(str), errors='coerce')
+
+        # Drop NA Penting
+        df_transaksi = df_transaksi.dropna(subset=['Last Trading Date', 'Stock Code'])
+        df_kepemilikan = df_kepemilikan.dropna(subset=['Tanggal_Data', 'Kode Efek'])
+
+        # Konversi Numerik
+        numeric_cols = ['Volume', 'Value', 'Foreign Buy', 'Foreign Sell', 'Net Foreign Flow', 
+                        'Big_Player_Anomaly', 'Close', 'Volume Spike (x)', 'Avg_Order_Volume',
+                        'Tradeble Shares', 'Free Float', 'Typical Price', 'TPxV', 'Frequency',
+                        'Previous', 'Open Price', 'High', 'Low', 'Change %']
+
+        for col in numeric_cols:
+            if col in df_transaksi.columns:
+                df_transaksi[col] = pd.to_numeric(df_transaksi[col], errors='coerce').fillna(0)
+
+        # Hitung AOVol (Average Order Volume) moving average
+        df_transaksi = df_transaksi.sort_values(['Stock Code', 'Last Trading Date'])
+        df_transaksi['AOVol_MA20'] = df_transaksi.groupby('Stock Code')['Avg_Order_Volume'].transform(
+            lambda x: x.rolling(20, min_periods=1).mean()
+        )
+        df_transaksi['AOVol_Ratio'] = df_transaksi['Avg_Order_Volume'] / df_transaksi['AOVol_MA20'].replace(0, np.nan)
+        df_transaksi['AOVol_Ratio'] = df_transaksi['AOVol_Ratio'].fillna(1)
+
+        # Metrik Tambahan (Volume % Tradeble)
+        if 'Tradeble Shares' in df_transaksi.columns:
+            df_transaksi['Volume_Pct_Tradeble'] = np.where(
+                df_transaksi['Tradeble Shares'] > 0, 
+                (df_transaksi['Volume'] / df_transaksi['Tradeble Shares']) * 100, 
+                0
+            )
+        else:
+            df_transaksi['Volume_Pct_Tradeble'] = 0
+
         return df_transaksi, df_kepemilikan
+        
     except Exception as e:
         st.error(f"Error loading data: {e}")
-        return None, None
+        return pd.DataFrame(), pd.DataFrame()
 
-with st.spinner("📊 Memuat Data Bandarmology..."):
-    df_transaksi, df_kepemilikan = load_data()
+# Panggil fungsi yang sudah di-cache
+df_transaksi, df_kepemilikan = load_and_preprocess_data()
 
-if df_transaksi is None: 
+if df_transaksi.empty: 
     st.stop()
-
-# --- PREPROCESSING ---
-# Konversi Tanggal
-df_transaksi['Last Trading Date'] = pd.to_datetime(df_transaksi['Last Trading Date'].astype(str), errors='coerce')
-df_kepemilikan['Tanggal_Data'] = pd.to_datetime(df_kepemilikan['Tanggal_Data'].astype(str), errors='coerce')
-
-# Drop NA Penting
-df_transaksi = df_transaksi.dropna(subset=['Last Trading Date', 'Stock Code'])
-df_kepemilikan = df_kepemilikan.dropna(subset=['Tanggal_Data', 'Kode Efek'])
-
-# Konversi Numerik
-numeric_cols = ['Volume', 'Value', 'Foreign Buy', 'Foreign Sell', 'Net Foreign Flow', 
-                'Big_Player_Anomaly', 'Close', 'Volume Spike (x)', 'Avg_Order_Volume',
-                'Tradeble Shares', 'Free Float', 'Typical Price', 'TPxV', 'Frequency',
-                'Previous', 'Open Price', 'High', 'Low', 'Change %']
-
-for col in numeric_cols:
-    if col in df_transaksi.columns:
-        df_transaksi[col] = pd.to_numeric(df_transaksi[col], errors='coerce').fillna(0)
-
-# Hitung AOVol (Average Order Volume) moving average
-df_transaksi = df_transaksi.sort_values(['Stock Code', 'Last Trading Date'])
-df_transaksi['AOVol_MA20'] = df_transaksi.groupby('Stock Code')['Avg_Order_Volume'].transform(
-    lambda x: x.rolling(20, min_periods=1).mean()
-)
-df_transaksi['AOVol_Ratio'] = df_transaksi['Avg_Order_Volume'] / df_transaksi['AOVol_MA20'].replace(0, np.nan)
-df_transaksi['AOVol_Ratio'] = df_transaksi['AOVol_Ratio'].fillna(1)
-
-# Metrik Tambahan
-if 'Tradeble Shares' in df_transaksi.columns:
-    df_transaksi['Volume_Pct_Tradeble'] = np.where(
-        df_transaksi['Tradeble Shares'] > 0, 
-        (df_transaksi['Volume'] / df_transaksi['Tradeble Shares']) * 100, 
-        0
-    )
-else:
-    df_transaksi['Volume_Pct_Tradeble'] = 0
 
 unique_stocks = sorted(df_transaksi['Stock Code'].unique())
 max_date = df_transaksi['Last Trading Date'].max().date()
@@ -585,18 +586,22 @@ with tabs[1]:
                         # Tampilkan 20 teratas
                         display_mut = df_mutations.head(20).drop(columns=['Abs_Perubahan']).copy()
                         
+                        # ======================================================
+                        # INI BAGIAN TABEL YANG FORMAT ANGKA-NYA DIPERBAIKI (%,.0f)
+                        # ======================================================
                         st.dataframe(
                             display_mut, 
                             use_container_width=True, 
                             hide_index=True,
                             column_config={
                                 "Periode": st.column_config.TextColumn("Week Periode"),
-                                "Sebelum": st.column_config.NumberColumn("Sebelum (Lembar)", format="%d"),
-                                "Sesudah": st.column_config.NumberColumn("Sesudah (Lembar)", format="%d"),
-                                "Perubahan": st.column_config.NumberColumn("Mutasi (Lembar)", format="%d"),
+                                "Sebelum": st.column_config.NumberColumn("Sebelum (Lembar)", format="%,.0f"),
+                                "Sesudah": st.column_config.NumberColumn("Sesudah (Lembar)", format="%,.0f"),
+                                "Perubahan": st.column_config.NumberColumn("Mutasi (Lembar)", format="%,.0f"),
                                 "Perubahan %": st.column_config.NumberColumn("Mutasi %", format="%.1f%%")
                             }
                         )
+                        # ======================================================
                         
                         # Summary Akumulasi/Distribusi
                         st.markdown("#### 📊 Summary Mutasi")
