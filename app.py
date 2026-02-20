@@ -711,11 +711,11 @@ with tabs[1]:
         with st.expander("🔄 Klik untuk lihat Analisis Kepemilikan KSEI (Institusi Lokal vs Asing)", expanded=False):
             if len(df_kepemilikan) > 0 and 'Kode Efek' in df_kepemilikan.columns:
                 
-                # Mengambil data KSEI Pivot dari CACHE
-                ksei_pivot = get_cached_ksei_timeline(selected_stock, df_kepemilikan)
+                # Mengambil data KSEI Pivot dari CACHE dengan parameter dinamis
+                ksei_pivot = get_cached_ksei_timeline(selected_stock, interval, chart_len, max_date, period_map, df_kepemilikan)
                 
                 if ksei_pivot is not None and len(ksei_pivot.columns) > 0:
-                    st.markdown("#### 📅 Timeline Kepemilikan KSEI (Weekly)")
+                    st.markdown(f"#### 📅 Timeline Kepemilikan KSEI ({interval})")
                     fig_timeline = go.Figure()
                     colors = px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
                     x_labels = ksei_pivot.index
@@ -723,27 +723,24 @@ with tabs[1]:
                     for i, rekening in enumerate(ksei_pivot.columns):
                         fig_timeline.add_trace(go.Scatter(
                             x=x_labels, 
-                            y=ksei_pivot[rekening], # Menampilkan nilai asli (bukan dibagi 1 juta)
+                            y=ksei_pivot[rekening],
                             name=rekening[:30] + '...' if len(rekening) > 30 else rekening,
-                            mode='lines', # Dibuat garis solid (bukan area)
+                            mode='lines', 
                             line=dict(width=2.5, color=colors[i % len(colors)])
-                            # stackgroup='one' DIHAPUS agar menjadi Line Chart terpisah
                         ))
                     
+                    # Layout dikembalikan ke Tema Terang (White)
                     fig_timeline.update_layout(
-                        template='plotly_dark', # Tema Gelap
-                        plot_bgcolor='#2b2b2b', # Warna background mirip referensi
-                        paper_bgcolor='#2b2b2b',
+                        template='plotly_white', # <--- KEMBALI KE PUTIH
                         height=550, 
-                        xaxis_title="Week", 
+                        xaxis_title=f"Waktu ({interval})", 
                         yaxis_title="Average of Jumlah Saham (Curr)",
                         hovermode='x unified', 
                         margin=dict(t=40, b=40, l=20, r=20),
-                        # Legend dipindah ke sebelah kanan seperti di gambar
                         legend=dict(orientation='v', yanchor='top', y=1, xanchor='left', x=1.02, font=dict(size=10))
                     )
                     
-                    fig_timeline.update_xaxes(type='category', tickangle=90) # Tulisan Week tegak lurus
+                    fig_timeline.update_xaxes(type='category', tickangle=90 if interval != "Daily" else 45)
                     st.plotly_chart(fig_timeline, use_container_width=True, config={'displayModeBar': False})
                     
                     # TABEL MUTASI DETAIL
