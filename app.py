@@ -395,37 +395,45 @@ tabs = st.tabs([
     "🗺️ MARKET MAP"
 ])
 
-# ==================== TAB 1: SCREENER PRO (ROCKET EDITION) ====================
+# ==================== TAB 1: SCREENER PRO (WHALE & ROCKET EDITION) ====================
 with tabs[0]:
-    st.markdown("### 🎯 Screener Pro - Saham Siap Terbang 🚀")
-    st.markdown("Mencari saham dengan jejak akumulasi bandar (AOVol Spikes), serapan float tinggi, dan likuiditas aman.")
+    st.markdown("### 🎯 Screener Pro - Whale & Float Absorption Radar 🚀")
     
     with st.container():
         st.markdown('<div class="filter-container">', unsafe_allow_html=True)
         
+        # BARIS 1: Mode Deteksi & Fase Harga (Adopsi dari Script Lama)
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
+            target_deteksi = st.radio("Target Deteksi:", ("🐋 Whale Accumulation (High AOV)", "🩸 Retail Panic / Mark-down (Low AOV)"))
+        with col_m2:
+            price_condition = st.selectbox(
+                "Fase Pergerakan Harga (Price Context):",
+                [
+                    "🔍 SEMUA FASE (Tampilkan Semua)",
+                    "💎 HIDDEN GEM (Sideways/Datar: -2% s/d +2%)", 
+                    "⚓ BOTTOM FISHING (Lagi Turun: < VWMA atau Minus)",
+                    "🚀 EARLY MOVE (Baru Mulai Naik: 0% s/d +4%)"
+                ]
+            )
+        with col_m3:
+            date_range = st.date_input("Periode Screener", value=(default_start, max_date))
+
+        st.divider()
+
+        # BARIS 2: Filter Likuiditas & Kriteria
         r1c1, r1c2, r1c3, r1c4 = st.columns(4)
         with r1c1:
-            # ANTI GORENGAN KOLESTEROL: Pakai Rata-rata per Hari, bukan Total
             min_avg_val = st.number_input("Min Rata-rata Nilai/Hari (M)", 0, 5000, 5) * 1e9
         with r1c2:
             min_price = st.number_input("Min Harga (Rp)", 0, 50000, 50)
         with r1c3:
-            # Selaras dengan Tab 2: Hitung berapa kali spike terjadi
-            min_spikes = st.number_input("Min AOVol Spikes (>1.5x)", 0, 50, 2)
+            if "Whale" in target_deteksi:
+                min_spikes = st.number_input("Min Whale Spikes (>1.5x)", 0, 50, 2)
+            else:
+                min_spikes = st.number_input("Min Retail Drops (<0.6x)", 0, 50, 2)
         with r1c4:
-            foreign_filter = st.selectbox("Foreign Flow (Periode)", ["Semua", "Net Buy", "Net Sell", "Net Buy > 5M"])
-        
-        r2c1, r2c2, r2c3, r2c4 = st.columns(4)
-        with r2c1:
-            date_range = st.date_input("Periode Screener", value=(default_start, max_date))
-        with r2c2:
-            # Selaras dengan Float Analysis
             min_turnover = st.slider("Min Serapan Float (%)", 0.0, 50.0, 1.0, 0.5)
-        with r2c3:
-            # Filter berdasarkan Posisi Harga vs Bandar Average
-            trend_filter = st.selectbox("Trend (vs VWMA 20D)", ["Semua", "Harga > VWMA (Uptrend/Breakout)", "Harga < VWMA (Downtrend/Bottoming)"])
-        with r2c4:
-            min_anomali = st.slider("Min BP Anomaly (x)", 0, 20, 0)
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -436,18 +444,21 @@ with tabs[0]:
         df_filter = df_transaksi[mask].copy()
         
         if not df_filter.empty:
-            with st.spinner("🔍 Memindai jejak bandar di market..."):
-                # Hitung spike harian
-                df_filter['Is_Spike'] = (df_filter['AOVol_Ratio'] > 1.5).astype(int)
+            with st.spinner("🔍 Memindai jejak Whale & pergerakan Ritel..."):
+                # Klasifikasi Sinyal Harian
+                df_filter['Is_Whale_Spike'] = (df_filter['AOVol_Ratio'] >= 1.5).astype(int)
+                df_filter['Is_Retail_Drop'] = ((df_filter['AOVol_Ratio'] <= 0.6) & (df_filter['AOVol_Ratio'] > 0)).astype(int)
                 
                 # Agregasi Data
                 summary = df_filter.groupby('Stock Code').agg(
                     Close=('Close', 'last'),
+                    Last_Change=('Change %', 'last'), # Ambil % Change terakhir untuk konteks harga
                     VWMA_20D=('VWMA_20D', 'last') if 'VWMA_20D' in df_filter.columns else ('Close', 'last'),
                     Total_Value=('Value', 'sum'),
                     Total_Volume=('Volume', 'sum'),
                     Net_Foreign=('Net Foreign Flow', 'sum'),
-                    AOVol_Spikes=('Is_Spike', 'sum'),
+                    Whale_Spikes=('Is_Whale_Spike', 'sum'),
+                    Retail_Drops=('Is_Retail_Drop', 'sum'),
                     Max_Anomaly=('Big_Player_Anomaly', 'max'),
                     Trading_Days=('Last Trading Date', 'nunique')
                 ).reset_index()
@@ -461,69 +472,82 @@ with tabs[0]:
                     0
                 )
                 
-                # --- APPLY FILTERS ---
+                # --- APPLY BASE FILTERS ---
                 summary = summary[summary['Avg_Daily_Value'] >= min_avg_val]
                 summary = summary[summary['Close'] >= min_price]
-                summary = summary[summary['AOVol_Spikes'] >= min_spikes]
                 summary = summary[summary['Turnover_Float_Pct'] >= min_turnover]
-                summary = summary[summary['Max_Anomaly'] >= min_anomali]
                 
-                if foreign_filter == "Net Buy":
-                    summary = summary[summary['Net_Foreign'] > 0]
-                elif foreign_filter == "Net Sell":
-                    summary = summary[summary['Net_Foreign'] < 0]
-                elif foreign_filter == "Net Buy > 5M":
-                    summary = summary[summary['Net_Foreign'] > 5e9]
+                # --- APPLY TARGET DETECTION FILTER ---
+                if "Whale" in target_deteksi:
+                    summary = summary[summary['Whale_Spikes'] >= min_spikes]
+                    target_col = 'Whale_Spikes'
+                else:
+                    summary = summary[summary['Retail_Drops'] >= min_spikes]
+                    target_col = 'Retail_Drops'
+
+                # --- APPLY PRICE CONTEXT FILTER (Adopsi Script Lama) ---
+                if price_condition == "💎 HIDDEN GEM (Sideways/Datar: -2% s/d +2%)":
+                    summary = summary[(summary['Last_Change'] >= -2.0) & (summary['Last_Change'] <= 2.0)]
+                elif price_condition == "⚓ BOTTOM FISHING (Lagi Turun: < VWMA atau Minus)":
+                    summary = summary[(summary['Close'] < summary['VWMA_20D']) | (summary['Last_Change'] < 0)]
+                elif price_condition == "🚀 EARLY MOVE (Baru Mulai Naik: 0% s/d +4%)":
+                    summary = summary[(summary['Last_Change'] > 0) & (summary['Last_Change'] <= 4.0)]
                 
-                if trend_filter == "Harga > VWMA (Uptrend/Breakout)":
-                    summary = summary[summary['Close'] >= summary['VWMA_20D']]
-                elif trend_filter == "Harga < VWMA (Downtrend/Bottoming)":
-                    summary = summary[summary['Close'] < summary['VWMA_20D']]
+                # --- 🚀 ROCKET / CONVICTION SCORE ---
+                if "Whale" in target_deteksi:
+                    # Score untuk cari saham terbang (Akumulasi kuat)
+                    summary['Conviction_Score'] = (
+                        (summary['Whale_Spikes'] * 5) + 
+                        (summary['Turnover_Float_Pct'] * 1.5) + 
+                        (np.where(summary['Net_Foreign'] > 0, 10, 0)) + 
+                        (summary['Max_Anomaly'] * 2)
+                    )
+                else:
+                    # Score untuk cari saham bahaya didistribusi (Ritel masuk)
+                    summary['Conviction_Score'] = (
+                        (summary['Retail_Drops'] * 5) + 
+                        (summary['Turnover_Float_Pct'] * 1.0) + 
+                        (np.where(summary['Net_Foreign'] < 0, 10, 0)) 
+                    )
                 
-                # --- 🚀 ROCKET SCORE (Scoring System Baru) ---
-                # Menilai probabilitas saham terbang berdasarkan serapan barang dan agresivitas
-                summary['Rocket_Score'] = (
-                    (summary['AOVol_Spikes'] * 5) +  # 5 poin tiap kali bandar ngegas
-                    (summary['Turnover_Float_Pct'] * 1.5) +  # Makin banyak barang publik disedot, makin bagus
-                    (np.where(summary['Net_Foreign'] > 0, 10, 0)) + # Bonus 10 poin kalau Asing ikut akum
-                    (np.where(summary['Close'] > summary['VWMA_20D'], 10, 0)) + # Bonus 10 poin kalau trend terjaga
-                    (summary['Max_Anomaly'] * 2) # Poin tambahan dari Big Player Anomaly
-                )
-                
-                summary = summary.sort_values('Rocket_Score', ascending=False).head(100)
+                summary = summary.sort_values('Conviction_Score', ascending=False).head(100)
                 
                 st.markdown(f"**🎯 Ditemukan {len(summary)} saham potensial**")
                 
                 if len(summary) > 0:
-                    display_df = summary[['Stock Code', 'Close', 'Avg_Daily_Value', 'Turnover_Float_Pct', 
-                                         'AOVol_Spikes', 'Net_Foreign', 'Max_Anomaly', 'Rocket_Score']].copy()
+                    display_df = summary[['Stock Code', 'Close', 'Last_Change', 'Avg_Daily_Value', 'Turnover_Float_Pct', 
+                                         target_col, 'Net_Foreign', 'Max_Anomaly', 'Conviction_Score']].copy()
                     
-                    # --- JANGAN DIUBAH JADI STRING, TETAP ANGKA MURNI AGAR BISA DISORT ---
-                    # Kita hanya bagi angkanya agar skalanya pas (dalam Miliar)
+                    # --- Formatting Skala Angka Murni ---
                     display_df['Avg_Daily_Value'] = display_df['Avg_Daily_Value'] / 1e9
                     display_df['Net_Foreign'] = display_df['Net_Foreign'] / 1e9
                     
-                    # Ubah nama kolom
-                    display_df.columns = ['Kode', 'Harga', 'Avg Value/Hari (M)', '% Serap Float', 
-                                         'Total Spikes', 'Net Foreign (M)', 'Max Anomali', 'Rocket Score']
+                    # Dinamis nama kolom sesuai mode
+                    col_target_name = "Whale Spikes" if "Whale" in target_deteksi else "Retail Drops"
+                    score_emoji = "🚀" if "Whale" in target_deteksi else "🩸"
                     
-                    # --- TAMPILKAN TABEL DENGAN COLUMN CONFIG TAMPILAN ---
+                    display_df.columns = ['Kode', 'Harga', 'Change Terakhir', 'Avg Value/Hari (M)', '% Serap Float', 
+                                         col_target_name, 'Net Foreign (M)', 'Max Anomali', 'Conviction Score']
+                    
+                    # --- TAMPILAN TABEL DENGAN COLUMN CONFIG (BISA DI-SORT) ---
                     st.dataframe(
                         display_df, 
                         use_container_width=True, 
                         hide_index=True,
+                        height=500,
                         column_config={
                             "Harga": st.column_config.NumberColumn("Harga", format="Rp %d"),
+                            "Change Terakhir": st.column_config.NumberColumn("Change", format="%+.2f %%"),
                             "Avg Value/Hari (M)": st.column_config.NumberColumn("Avg Value/Hari (M)", format="Rp %.1f M"),
                             "% Serap Float": st.column_config.NumberColumn("% Serap Float", format="%.2f %%"),
-                            "Total Spikes": st.column_config.NumberColumn("Total Spikes", format="%d Kali"),
+                            col_target_name: st.column_config.NumberColumn(col_target_name, format="%d Kali"),
                             "Net Foreign (M)": st.column_config.NumberColumn("Net Foreign (M)", format="Rp %.1f M"),
                             "Max Anomali": st.column_config.NumberColumn("Max Anomali", format="%.1f x"),
-                            "Rocket Score": st.column_config.NumberColumn("Rocket Score", format="🚀 %.1f")
+                            "Conviction Score": st.column_config.NumberColumn("Conviction Score", format=f"{score_emoji} %.1f")
                         }
                     )
                 else:
-                    st.info("Tidak ada saham yang memenuhi kriteria ketat ini. Coba longgarkan filter (misal: turunkan Min Spikes atau Serapan Float).")
+                    st.info("Tidak ada saham yang memenuhi kriteria fase ini. Coba longgarkan filter atau ubah Fase Harga.")
 
 
 # ==================== TAB 2: DEEP DIVE & CHART (V3.3 SUPER FAST!) ====================
