@@ -311,6 +311,7 @@ with tabs[1]:
         df_stock['Open Price'] = df_stock['Open Price'].fillna(df_stock['Close'])
         # Jika masih kosong, isi dengan nilai sebelumnya
         df_stock['Open Price'] = df_stock['Open Price'].fillna(method='ffill')
+        df_stock['Open Price'] = df_stock['Open Price'].fillna(method='bfill')
         
         # RESAMPLING UNTUK INTERVAL WEEKLY/MONTHLY
         if interval == "Weekly":
@@ -332,9 +333,6 @@ with tabs[1]:
                                'Volume', 'Net Foreign Flow', 'Big_Player_Anomaly', 
                                'Avg_Order_Volume', 'AOVol_Ratio', 'Volume Spike (x)', 'Change %']
             
-            # Format tanggal untuk tampilan
-            df_chart['Week'] = df_chart['Last Trading Date'].dt.strftime('%Y-W%W')
-            
         elif interval == "Monthly":
             # Resample ke bulanan
             df_chart = df_stock.set_index('Last Trading Date').resample('M').agg({
@@ -353,9 +351,6 @@ with tabs[1]:
             df_chart.columns = ['Last Trading Date', 'Open Price', 'High', 'Low', 'Close',
                                'Volume', 'Net Foreign Flow', 'Big_Player_Anomaly',
                                'Avg_Order_Volume', 'AOVol_Ratio', 'Volume Spike (x)', 'Change %']
-            
-            # Format bulan untuk tampilan
-            df_chart['Month'] = df_chart['Last Trading Date'].dt.strftime('%Y-%m')
         else:
             # DAILY: Gunakan data asli
             df_chart = df_stock.copy()
@@ -420,7 +415,7 @@ with tabs[1]:
         with k5: 
             st.markdown(f"""
             <div class='kpi-card'>
-                <div class='kpi-value' style='color:{status_color}; font-size:18px;'>{status_text}</div>
+                <div class='kpi-value' style='color:{status_color}; font-size:16px;'>{status_text}</div>
                 <div class='kpi-label'>Foreign: Rp {recent_foreign/1e9:,.1f}M | Price: {price_change_pct:+.1f}%</div>
             </div>
             """, unsafe_allow_html=True)
@@ -456,7 +451,7 @@ with tabs[1]:
             decreasing_fillcolor='#ef5350'
         ), row=1, col=1)
         
-        # BINTANG UNTUK AOVol SPIKES (dipindah ke panel 1)
+        # BINTANG UNTUK AOVol SPIKES (warna cerah)
         if 'AOVol_Ratio' in df_chart.columns:
             aoVol_spikes = df_chart[df_chart['AOVol_Ratio'] > 1.5].dropna(subset=['Close'])
             if not aoVol_spikes.empty:
@@ -496,7 +491,7 @@ with tabs[1]:
                     hoverinfo='text'
                 ), row=1, col=1)
         
-        # PANEL 2: AOVOL ANALYSIS (Line Chart)
+        # PANEL 2: AOVOL ANALYSIS
         # AOVol dalam Juta Rupiah
         fig.add_trace(go.Scatter(
             x=df_chart['Last Trading Date'],
@@ -553,7 +548,7 @@ with tabs[1]:
         fig.update_layout(
             height=1000,
             hovermode='x unified',
-            margin=dict(t=80, b=40, l=40, r=40),
+            margin=dict(t=80, b=40, l=40, r=80),  # Tambah right margin untuk secondary axis
             xaxis_rangeslider_visible=False,
             legend=dict(
                 orientation='h',
@@ -565,7 +560,7 @@ with tabs[1]:
                 font=dict(size=10)
             ),
             title=dict(
-                text=f"<b>Data: {len(df_chart)} periode trading • Range: {df_chart['Last Trading Date'].iloc[0].strftime('%d-%b-%Y')} s/d {df_chart['Last Trading Date'].iloc[-1].strftime('%d-%b-%Y')}</b>",
+                text=f"<b>Data: {len(df_chart)} periode • {df_chart['Last Trading Date'].iloc[0].strftime('%d-%b-%Y')} s/d {df_chart['Last Trading Date'].iloc[-1].strftime('%d-%b-%Y')}</b>",
                 font=dict(size=12),
                 y=0.99
             )
@@ -582,7 +577,7 @@ with tabs[1]:
         # Y-axis titles
         fig.update_yaxes(title_text="Harga (Rp)", row=1, col=1)
         fig.update_yaxes(title_text="AOVol (Juta Rp)", row=2, col=1, secondary_y=False)
-        fig.update_yaxes(title_text="Ratio (x)", row=2, col=1, secondary_y=True, overlaying='y2')
+        fig.update_yaxes(title_text="Ratio (x)", row=2, col=1, secondary_y=True)
         fig.update_yaxes(title_text="Volume (Juta)", row=3, col=1)
         fig.update_yaxes(title_text="Foreign (M)", row=4, col=1)
         
@@ -642,15 +637,14 @@ with tabs[1]:
                             mode='lines+markers',
                             line=dict(width=2, color=colors[color_idx]),
                             marker=dict(size=6),
-                            stackgroup='one',  # Stacked area chart
-                            groupnorm='percent'  # Tampilkan sebagai persentase
+                            stackgroup='one'  # Stacked area chart
                         ))
                     
                     fig_timeline.update_layout(
                         height=450,
-                        title="Perubahan Kepemilikan - Stacked Area (Persentase)",
+                        title="Perubahan Kepemilikan - Stacked Area (Juta Lembar)",
                         xaxis_title="Tanggal",
-                        yaxis_title="Persentase Kepemilikan",
+                        yaxis_title="Jumlah Saham (Juta)",
                         hovermode='x unified',
                         legend=dict(
                             orientation='h',
@@ -697,17 +691,20 @@ with tabs[1]:
                     
                     if all_mutations:
                         df_mutations = pd.DataFrame(all_mutations)
-                        df_mutations = df_mutations.sort_values('abs(Perubahan)', ascending=False)
+                        
+                        # PERBAIKAN: Sort berdasarkan nilai absolut Perubahan
+                        df_mutations['Abs_Perubahan'] = abs(df_mutations['Perubahan'])
+                        df_mutations = df_mutations.sort_values('Abs_Perubahan', ascending=False)
                         
                         # Tampilkan top 20 mutasi terbesar
                         display_mut = df_mutations.head(20)[['Periode', 'Rekening', 'Nama Pemegang', 
                                                              'Sebelum', 'Sesudah', 'Perubahan', 'Perubahan %', 'Aksi']].copy()
                         
                         # Format angka
-                        display_mut['Sebelum'] = display_mut['Sebelum'].apply(lambda x: f"{x/1e6:.1f} Jt")
-                        display_mut['Sesudah'] = display_mut['Sesudah'].apply(lambda x: f"{x/1e6:.1f} Jt")
+                        display_mut['Sebelum'] = display_mut['Sebelum'].apply(lambda x: f"{x/1e6:.2f} Jt")
+                        display_mut['Sesudah'] = display_mut['Sesudah'].apply(lambda x: f"{x/1e6:.2f} Jt")
                         display_mut['Perubahan'] = display_mut['Perubahan'].apply(
-                            lambda x: f"+{x/1e6:.1f} Jt" if x > 0 else f"{x/1e6:.1f} Jt"
+                            lambda x: f"+{x/1e6:.2f} Jt" if x > 0 else f"{x/1e6:.2f} Jt"
                         )
                         display_mut['Perubahan %'] = display_mut['Perubahan %'].round(1).apply(lambda x: f"{x:+.1f}%")
                         
@@ -724,11 +721,11 @@ with tabs[1]:
                         net_change = total_akumulasi - total_distribusi
                         
                         with col_sum1:
-                            st.metric("Total Akumulasi", f"{total_akumulasi/1e6:.1f} Jt")
+                            st.metric("Total Akumulasi", f"{total_akumulasi/1e6:.2f} Jt")
                         with col_sum2:
-                            st.metric("Total Distribusi", f"{total_distribusi/1e6:.1f} Jt")
+                            st.metric("Total Distribusi", f"{total_distribusi/1e6:.2f} Jt")
                         with col_sum3:
-                            st.metric("Net Change", f"{net_change/1e6:+.1f} Jt")
+                            st.metric("Net Change", f"{net_change/1e6:+.2f} Jt")
                         with col_sum4:
                             active_accounts = df_mutations['Rekening'].nunique()
                             st.metric("Rekening Aktif", active_accounts)
