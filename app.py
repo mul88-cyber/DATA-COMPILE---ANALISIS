@@ -498,18 +498,30 @@ with tabs[0]:
                     display_df = summary[['Stock Code', 'Close', 'Avg_Daily_Value', 'Turnover_Float_Pct', 
                                          'AOVol_Spikes', 'Net_Foreign', 'Max_Anomaly', 'Rocket_Score']].copy()
                     
-                    # Format numbers
-                    display_df['Close'] = display_df['Close'].apply(lambda x: f"Rp {x:,.0f}")
-                    display_df['Avg_Daily_Value'] = display_df['Avg_Daily_Value'].apply(lambda x: f"Rp {x/1e9:,.1f} M")
-                    display_df['Turnover_Float_Pct'] = display_df['Turnover_Float_Pct'].apply(lambda x: f"{x:.2f}%")
-                    display_df['Net_Foreign'] = display_df['Net_Foreign'].apply(lambda x: f"Rp {x/1e9:,.1f} M")
-                    display_df['Rocket_Score'] = display_df['Rocket_Score'].apply(lambda x: f"🚀 {x:.1f}")
-                    display_df['Max_Anomaly'] = display_df['Max_Anomaly'].apply(lambda x: f"{x:.1f}x")
+                    # --- JANGAN DIUBAH JADI STRING, TETAP ANGKA MURNI AGAR BISA DISORT ---
+                    # Kita hanya bagi angkanya agar skalanya pas (dalam Miliar)
+                    display_df['Avg_Daily_Value'] = display_df['Avg_Daily_Value'] / 1e9
+                    display_df['Net_Foreign'] = display_df['Net_Foreign'] / 1e9
                     
-                    display_df.columns = ['Kode', 'Harga', 'Avg Value/Hari', '% Serap Float', 
-                                         'Total Spikes', 'Net Foreign', 'Max Anomali', 'Rocket Score']
+                    # Ubah nama kolom
+                    display_df.columns = ['Kode', 'Harga', 'Avg Value/Hari (M)', '% Serap Float', 
+                                         'Total Spikes', 'Net Foreign (M)', 'Max Anomali', 'Rocket Score']
                     
-                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+                    # --- TAMPILKAN TABEL DENGAN COLUMN CONFIG TAMPILAN ---
+                    st.dataframe(
+                        display_df, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={
+                            "Harga": st.column_config.NumberColumn("Harga", format="Rp %d"),
+                            "Avg Value/Hari (M)": st.column_config.NumberColumn("Avg Value/Hari (M)", format="Rp %.1f M"),
+                            "% Serap Float": st.column_config.NumberColumn("% Serap Float", format="%.2f %%"),
+                            "Total Spikes": st.column_config.NumberColumn("Total Spikes", format="%d Kali"),
+                            "Net Foreign (M)": st.column_config.NumberColumn("Net Foreign (M)", format="Rp %.1f M"),
+                            "Max Anomali": st.column_config.NumberColumn("Max Anomali", format="%.1f x"),
+                            "Rocket Score": st.column_config.NumberColumn("Rocket Score", format="🚀 %.1f")
+                        }
+                    )
                 else:
                     st.info("Tidak ada saham yang memenuhi kriteria ketat ini. Coba longgarkan filter (misal: turunkan Min Spikes atau Serapan Float).")
 
