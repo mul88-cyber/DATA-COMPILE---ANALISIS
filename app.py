@@ -464,12 +464,17 @@ with tabs[0]:
                     Trading_Days=('Last Trading Date', 'nunique')
                 ).reset_index()
                 
-                # Metrik Lanjutan (Anti Gorengan & Float Absorption)
+                # Metrik Lanjutan (Anti Gorengan & Float Absorption PER HARI)
                 summary['Avg_Daily_Value'] = summary['Total_Value'] / summary['Trading_Days'].replace(0, 1)
+                
+                # --- PERBAIKAN: Hitung rata-rata volume per hari dulu ---
+                summary['Avg_Daily_Volume'] = summary['Total_Volume'] / summary['Trading_Days'].replace(0, 1)
                 summary['Public_Shares'] = summary['Stock Code'].map(DICT_PUBLIC_SHARES).fillna(0)
+                
+                # --- PERBAIKAN: Membagi Avg Daily Volume dengan Public Shares ---
                 summary['Turnover_Float_Pct'] = np.where(
                     summary['Public_Shares'] > 0, 
-                    (summary['Total_Volume'] / summary['Public_Shares']) * 100, 
+                    (summary['Avg_Daily_Volume'] / summary['Public_Shares']) * 100, 
                     0
                 )
                 
@@ -526,7 +531,7 @@ with tabs[0]:
                     col_target_name = "Whale Spikes" if "Whale" in target_deteksi else "Retail Drops"
                     score_emoji = "🚀" if "Whale" in target_deteksi else "🩸"
                     
-                    display_df.columns = ['Kode', 'Harga', 'Change Terakhir', 'Avg Value/Hari (M)', '% Serap Float', 
+                    display_df.columns = ['Kode', 'Harga', 'Change Terakhir', 'Avg Value/Hari (M)', '% Serap Float/Hari', 
                                          col_target_name, 'Max AOV Ratio', 'Net Foreign (M)', 'Max Anomali', 'Conviction Score']
                     
                     # ==========================================
@@ -572,7 +577,7 @@ with tabs[0]:
                             "Harga": st.column_config.NumberColumn("Harga", format="Rp %d"),
                             "Change Terakhir": st.column_config.NumberColumn("Change", format="%+.2f %%"),
                             "Avg Value/Hari (M)": st.column_config.NumberColumn("Avg Value/Hari (M)", format="Rp %.1f M"),
-                            "% Serap Float": st.column_config.NumberColumn("% Serap Float", format="%.2f %%"),
+                            "% Serap Float/Hari": st.column_config.NumberColumn("% Serap/Hari", format="%.2f %%"),
                             col_target_name: st.column_config.NumberColumn(col_target_name, format="%d Kali"),
                             "Max AOV Ratio": st.column_config.NumberColumn("Max AOV Ratio", format="%.2f x"),
                             "Net Foreign (M)": st.column_config.NumberColumn("Net Foreign (M)", format="Rp %.1f M"),
