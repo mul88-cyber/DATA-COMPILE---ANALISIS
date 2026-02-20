@@ -940,99 +940,178 @@ with tabs[1]:
                 st.warning("Data KSEI 5% tidak tersedia")
 
 
-# ==================== TAB 3: BROKER MUTASI ====================
+# ==================== TAB 3: KSEI SCREENER & BROKER RADAR ====================
 with tabs[2]:
-    st.markdown("### 🏦 Broker Mutation Radar - Semua Saham")
+    st.markdown("### 🏦 KSEI Master: Stock Screener & Broker Radar")
+    st.markdown("Melacak perpindahan barang **riil** antar institusi/broker berdasarkan data kepemilikan KSEI 5%.")
     
     if len(df_kepemilikan) > 0 and 'Kode Broker' in df_kepemilikan.columns:
         with st.container():
-            col_b1, col_b2, col_b3 = st.columns(3)
+            st.markdown('<div class="filter-container">', unsafe_allow_html=True)
+            col_b1, col_b2, col_b3, col_b4 = st.columns(4)
             with col_b1:
                 mutasi_period = st.selectbox("Periode Analisis", ["1 Minggu", "2 Minggu", "1 Bulan", "3 Bulan", "6 Bulan"], key='m_period')
                 days_map = {"1 Minggu": 7, "2 Minggu": 14, "1 Bulan": 30, "3 Bulan": 90, "6 Bulan": 180}
             with col_b2:
-                min_mutasi = st.number_input("Min Mutasi (Juta)", 0, 1000, 10) * 1e6
+                # Threshold ini membuang akun-akun ritel kecil agar hitungan fokus ke Big Player
+                min_mutasi = st.number_input("Min Mutasi/Rekening (Juta Lbr)", 0, 1000, 5) * 1e6
             with col_b3:
-                top_n = st.slider("Top N Broker", 5, 30, 15)
+                mode_ksei = st.selectbox("Tampilkan Mode:", ["🎯 KSEI Stock Screener", "🕵️ Top Broker Radar"])
+            with col_b4:
+                if mode_ksei == "🎯 KSEI Stock Screener":
+                    sort_by = st.selectbox("Urutkan Berdasarkan:", ["🔥 Highest % Serap Float", "🟢 Top Net Accumulation (Lbr)", "🔴 Top Net Distribution (Lbr)"])
+                else:
+                    top_n = st.slider("Top N Broker", 5, 50, 15)
+            st.markdown('</div>', unsafe_allow_html=True)
         
-        start_mutasi = df_kepemilikan['Tanggal_Data'].max() - timedelta(days=days_map[mutasi_period])
+        # Ambil max date asli dari data KSEI
+        max_date_ksei = df_kepemilikan['Tanggal_Data'].max()
+        start_mutasi = max_date_ksei - timedelta(days=days_map[mutasi_period])
         df_ksei_period = df_kepemilikan[df_kepemilikan['Tanggal_Data'] >= start_mutasi].copy()
         
         if not df_ksei_period.empty:
-            # Hitung mutasi per broker per saham - ✅ OPTIMIZED: Vectorized
-            mutasi = df_ksei_period.sort_values('Tanggal_Data').groupby(['Kode Broker', 'Kode Efek']).agg(
-                Awal=('Jumlah Saham (Curr)', 'first'),
-                Akhir=('Jumlah Saham (Curr)', 'last'),
-                Nama=('Nama Pemegang Saham', 'first')
-            ).reset_index()
-            
-            mutasi['Net_Change'] = mutasi['Akhir'] - mutasi['Awal']
-            mutasi = mutasi[abs(mutasi['Net_Change']) >= min_mutasi]
+            with st.spinner("⏳ Menghitung mutasi KSEI jutaan data..."):
+                # Hitung mutasi per rekening per saham - OPTIMIZED Vectorized
+                mutasi = df_ksei_period.sort_values('Tanggal_Data').groupby(['Kode Broker', 'Kode Efek']).agg(
+                    Awal=('Jumlah Saham (Curr)', 'first'),
+                    Akhir=('Jumlah Saham (Curr)', 'last'),
+                    Nama=('Nama Pemegang Saham', 'first')
+                ).reset_index()
+                
+                mutasi['Net_Change'] = mutasi['Akhir'] - mutasi['Awal']
+                # Filter hanya rekening yang mutasinya melebihi batas minimal (Fokus ke Whale)
+                mutasi = mutasi[abs(mutasi['Net_Change']) >= min_mutasi]
             
             if len(mutasi) > 0:
-                # Summary per broker
-                broker_summary = mutasi.groupby('Kode Broker').agg({
-                    'Net_Change': 'sum',
-                    'Kode Efek': lambda x: list(x)
-                }).reset_index()
-                broker_summary.columns = ['Kode Broker', 'Total Mutasi', 'List Saham']
-                
-                # Top Accumulator & Distributor
-                top_acc = broker_summary.nlargest(top_n, 'Total Mutasi')
-                top_dist = broker_summary.nsmallest(top_n, 'Total Mutasi')
-                top_dist['Total Mutasi'] = abs(top_dist['Total Mutasi'])
-                
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown(f"#### 🟢 Top {top_n} Accumulator ({mutasi_period})")
-                    if not top_acc.empty:
-                        display_acc = top_acc[['Kode Broker', 'Total Mutasi']].copy()
-                        display_acc['Total Mutasi'] = display_acc['Total Mutasi'].apply(lambda x: f"{x:,.0f}")
-                        display_acc.columns = ['Broker', 'Total Akumulasi']
-                        st.dataframe(display_acc, use_container_width=True, hide_index=True)
-                
-                with c2:
-                    st.markdown(f"#### 🔴 Top {top_n} Distributor ({mutasi_period})")
-                    if not top_dist.empty:
-                        display_dist = top_dist[['Kode Broker', 'Total Mutasi']].copy()
-                        display_dist['Total Mutasi'] = display_dist['Total Mutasi'].apply(lambda x: f"{x:,.0f}")
-                        display_dist.columns = ['Broker', 'Total Distribusi']
-                        st.dataframe(display_dist, use_container_width=True, hide_index=True)
-                
-                # Detail per broker (DENGAN % SERAPAN FLOAT)
-                st.divider()
-                st.markdown("#### 🔎 Detail Mutasi per Broker & Float Absorption")
-                
-                all_brokers = sorted(broker_summary['Kode Broker'].unique())
-                sel_broker = st.selectbox("Pilih Broker", all_brokers, key='m_broker_detail')
-                
-                if sel_broker:
-                    detail = mutasi[mutasi['Kode Broker'] == sel_broker].copy()
-                    detail = detail.sort_values('Net_Change', ascending=False)
+                if mode_ksei == "🎯 KSEI Stock Screener":
+                    # ==========================================
+                    # MODE 1: KSEI STOCK SCREENER
+                    # ==========================================
+                    st.markdown(f"#### 🎯 Saham dengan Perubahan KSEI Paling Ekstrem ({mutasi_period})")
                     
-                    if not detail.empty:
-                        display_detail = detail[['Kode Efek', 'Nama', 'Awal', 'Akhir', 'Net_Change']].copy()
+                    # Agregasi data di level Saham
+                    stock_ksei = mutasi.groupby('Kode Efek').agg(
+                        Akumulasi=('Net_Change', lambda x: x[x > 0].sum()),
+                        Distribusi=('Net_Change', lambda x: x[x < 0].sum()),
+                        Total_Net_Change=('Net_Change', 'sum'),
+                        Broker_Aktif=('Kode Broker', 'nunique')
+                    ).reset_index()
+                    
+                    # Kalkulasi Serapan Float Riil!
+                    stock_ksei['Nama_Perusahaan'] = stock_ksei['Kode Efek'].map(DICT_STOCK_NAME).fillna('-')
+                    stock_ksei['Public_Shares'] = stock_ksei['Kode Efek'].map(DICT_PUBLIC_SHARES).fillna(0)
+                    
+                    # Berapa % barang publik yang ditarik (Net)
+                    stock_ksei['Net_Float_Absorbed'] = np.where(
+                        stock_ksei['Public_Shares'] > 0, 
+                        (stock_ksei['Total_Net_Change'] / stock_ksei['Public_Shares']) * 100, 
+                        0
+                    )
+                    
+                    # Sorting Logic
+                    if sort_by == "🔥 Highest % Serap Float":
+                        stock_ksei = stock_ksei.sort_values('Net_Float_Absorbed', ascending=False)
+                    elif sort_by == "🟢 Top Net Accumulation (Lbr)":
+                        stock_ksei = stock_ksei.sort_values('Total_Net_Change', ascending=False)
+                    else:
+                        stock_ksei = stock_ksei.sort_values('Total_Net_Change', ascending=True)
                         
-                        # Map Public Shares & Hitung Sinyal
-                        display_detail['Public_Shares'] = display_detail['Kode Efek'].map(DICT_PUBLIC_SHARES).fillna(0)
-                        display_detail['Serap_Float_Pct'] = np.where(
-                            display_detail['Public_Shares'] > 0, 
-                            (display_detail['Net_Change'] / display_detail['Public_Shares']) * 100, 
-                            0
-                        )
-                        display_detail['Sinyal'] = np.where(display_detail['Serap_Float_Pct'].abs() >= 2.0, '🚨', '')
+                    # Formatting Kolom untuk Tabel
+                    display_ksei = stock_ksei[['Kode Efek', 'Nama_Perusahaan', 'Akumulasi', 'Distribusi', 'Total_Net_Change', 'Net_Float_Absorbed', 'Broker_Aktif']].head(100).copy()
+                    
+                    # === STYLING KSEI SCREENER ===
+                    styled_ksei = display_ksei.style
+                    
+                    # Color map RdYlGn: Hijau kalau akumulasi (+), Merah kalau distribusi (-)
+                    styled_ksei = styled_ksei.background_gradient(subset=['Net_Float_Absorbed'], cmap='RdYlGn', vmin=-5, vmax=5)
+                    
+                    def color_ksei_net(val):
+                        if val > 0: return 'color: #10b981; font-weight: bold;' # Hijau
+                        if val < 0: return 'color: #ef4444; font-weight: bold;' # Merah
+                        return ''
+                    styled_ksei = styled_ksei.map(color_ksei_net, subset=['Total_Net_Change'])
+                    
+                    st.dataframe(
+                        styled_ksei,
+                        use_container_width=True, hide_index=True, height=600,
+                        column_config={
+                            "Kode Efek": st.column_config.TextColumn("Saham", width="small"),
+                            "Nama_Perusahaan": st.column_config.TextColumn("Perusahaan", width="medium"),
+                            "Akumulasi": st.column_config.NumberColumn("Total Serokan (Lbr)", format="%,.0f"),
+                            "Distribusi": st.column_config.NumberColumn("Total Buangan (Lbr)", format="%,.0f"),
+                            "Total_Net_Change": st.column_config.NumberColumn("Net Mutasi KSEI (Lbr)", format="%+,.0f"),
+                            "Net_Float_Absorbed": st.column_config.NumberColumn("Net % Serap Float", format="%+.2f%%"),
+                            "Broker_Aktif": st.column_config.NumberColumn("Jml Entitas/Rekening Aktif", format="%d")
+                        }
+                    )
+                    
+                else:
+                    # ==========================================
+                    # MODE 2: BROKER RADAR (Bawaan V3 yang dipertajam)
+                    # ==========================================
+                    # Summary per broker
+                    broker_summary = mutasi.groupby('Kode Broker').agg({
+                        'Net_Change': 'sum',
+                        'Kode Efek': lambda x: list(x)
+                    }).reset_index()
+                    broker_summary.columns = ['Kode Broker', 'Total Mutasi', 'List Saham']
+                    
+                    # Top Accumulator & Distributor
+                    top_acc = broker_summary.nlargest(top_n, 'Total Mutasi')
+                    top_dist = broker_summary.nsmallest(top_n, 'Total Mutasi')
+                    top_dist['Total Mutasi'] = abs(top_dist['Total Mutasi'])
+                    
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.markdown(f"#### 🟢 Top {top_n} Accumulator ({mutasi_period})")
+                        if not top_acc.empty:
+                            display_acc = top_acc[['Kode Broker', 'Total Mutasi']].copy()
+                            display_acc['Total Mutasi'] = display_acc['Total Mutasi'].apply(lambda x: f"{x:,.0f}")
+                            display_acc.columns = ['Broker', 'Total Akumulasi']
+                            st.dataframe(display_acc, use_container_width=True, hide_index=True)
+                    
+                    with c2:
+                        st.markdown(f"#### 🔴 Top {top_n} Distributor ({mutasi_period})")
+                        if not top_dist.empty:
+                            display_dist = top_dist[['Kode Broker', 'Total Mutasi']].copy()
+                            display_dist['Total Mutasi'] = display_dist['Total Mutasi'].apply(lambda x: f"{x:,.0f}")
+                            display_dist.columns = ['Broker', 'Total Distribusi']
+                            st.dataframe(display_dist, use_container_width=True, hide_index=True)
+                    
+                    # Detail per broker (DENGAN % SERAPAN FLOAT)
+                    st.divider()
+                    st.markdown("#### 🔎 Detail Mutasi per Broker & Float Absorption")
+                    
+                    all_brokers = sorted(broker_summary['Kode Broker'].unique())
+                    sel_broker = st.selectbox("Pilih Broker", all_brokers, key='m_broker_detail')
+                    
+                    if sel_broker:
+                        detail = mutasi[mutasi['Kode Broker'] == sel_broker].copy()
+                        detail = detail.sort_values('Net_Change', ascending=False)
                         
-                        # Formatting Display
-                        display_detail['Awal'] = display_detail['Awal'].apply(lambda x: f"{x:,.0f}")
-                        display_detail['Akhir'] = display_detail['Akhir'].apply(lambda x: f"{x:,.0f}")
-                        display_detail['Net_Change'] = display_detail['Net_Change'].apply(
-                            lambda x: f"+{x:,.0f}" if x > 0 else f"{x:,.0f}"
-                        )
-                        display_detail['Serap_Float_Pct'] = display_detail['Serap_Float_Pct'].apply(lambda x: f"{x:+.2f}%")
-                        
-                        display_detail = display_detail[['Kode Efek', 'Nama', 'Awal', 'Akhir', 'Net_Change', 'Serap_Float_Pct', 'Sinyal']]
-                        display_detail.columns = ['Saham', 'Pemegang', 'Awal', 'Akhir', 'Mutasi', '% Serap Float', 'Sinyal']
-                        st.dataframe(display_detail, use_container_width=True, hide_index=True)
+                        if not detail.empty:
+                            display_detail = detail[['Kode Efek', 'Nama', 'Awal', 'Akhir', 'Net_Change']].copy()
+                            
+                            # Map Public Shares & Hitung Sinyal
+                            display_detail['Public_Shares'] = display_detail['Kode Efek'].map(DICT_PUBLIC_SHARES).fillna(0)
+                            display_detail['Serap_Float_Pct'] = np.where(
+                                display_detail['Public_Shares'] > 0, 
+                                (display_detail['Net_Change'] / display_detail['Public_Shares']) * 100, 
+                                0
+                            )
+                            display_detail['Sinyal'] = np.where(display_detail['Serap_Float_Pct'].abs() >= 2.0, '🚨', '')
+                            
+                            # Formatting Display
+                            display_detail['Awal'] = display_detail['Awal'].apply(lambda x: f"{x:,.0f}")
+                            display_detail['Akhir'] = display_detail['Akhir'].apply(lambda x: f"{x:,.0f}")
+                            display_detail['Net_Change'] = display_detail['Net_Change'].apply(
+                                lambda x: f"+{x:,.0f}" if x > 0 else f"{x:,.0f}"
+                            )
+                            display_detail['Serap_Float_Pct'] = display_detail['Serap_Float_Pct'].apply(lambda x: f"{x:+.2f}%")
+                            
+                            display_detail = display_detail[['Kode Efek', 'Nama', 'Awal', 'Akhir', 'Net_Change', 'Serap_Float_Pct', 'Sinyal']]
+                            display_detail.columns = ['Saham', 'Pemegang', 'Awal', 'Akhir', 'Mutasi', '% Serap Float', 'Sinyal']
+                            st.dataframe(display_detail, use_container_width=True, hide_index=True)
             else:
                 st.info(f"Tidak ada mutasi ≥ {min_mutasi/1e6:.0f} juta dalam periode ini")
         else:
