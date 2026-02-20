@@ -213,7 +213,7 @@ def prepare_chart_data(stock_code, interval, chart_len, max_date, period_map, _d
     df_chart['Low'] = df_chart['Low'].fillna(df_chart['Close'])
     # ====================================================
     
-    # Kamus agregasi resampling
+    # Kamus agregasi resampling (DITAMBAH FLOAT & TRADEBLE SHARES)
     agg_dict = {
         'Open Price': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last',
         'Volume': 'sum', 'Net Foreign Flow': 'sum', 'Big_Player_Anomaly': 'max',
@@ -221,6 +221,13 @@ def prepare_chart_data(stock_code, interval, chart_len, max_date, period_map, _d
         'Change %': 'last'
     }
     
+    # Pastikan data float ikut ter-load
+    if 'Tradeble Shares' in df_chart.columns:
+        agg_dict['Tradeble Shares'] = 'last'
+    if 'Free Float' in df_chart.columns:
+        agg_dict['Free Float'] = 'last'
+    if 'Volume_Pct_Tradeble' in df_chart.columns:
+        agg_dict['Volume_Pct_Tradeble'] = 'sum' # Di-sum agar terlihat total % turnover di periode tsb
     if 'VWMA_20D' in df_chart.columns:
         agg_dict['VWMA_20D'] = 'last'
     if 'MA20_vol' in df_chart.columns:
@@ -264,31 +271,16 @@ def compute_ksei_mutations_optimized(ksei_stock):
     if mutations.empty:
         return pd.DataFrame()
     
-    # Hitung persentase perubahan
-    mutations['Change_Pct'] = (
-        mutations['Change'] / mutations['Prev_Holding'].replace(0, np.nan) * 100
-    ).fillna(0)
-    
-    # Deteksi Status (Lokal/Asing)
-    mutations['Stat_Raw'] = mutations.get('Status', 'L').astype(str).str.strip().str.upper()
-    mutations['Tipe_Investor'] = np.where(
-        mutations['Stat_Raw'] == 'A', "🌐 ASING", "🇮🇩 LOKAL"
-    )
-    
     # Format periode ke ISO Week
     mutations['Periode'] = mutations['Tanggal_Data'].dt.strftime('%G-W%V')
     
-    # Build output dataframe
+    # Build output dataframe (Tanpa Perubahan % lama, dihitung dinamis nanti)
     result = pd.DataFrame({
         'Periode': mutations['Periode'],
-        'Tipe Investor': mutations['Tipe_Investor'],
         'Rekening / Broker': mutations['Rekening_ID'],
-        'Nama Pemegang': mutations['Nama Pemegang Saham'],
         'Sebelum': mutations['Prev_Holding'],
         'Sesudah': mutations['Jumlah Saham (Curr)'],
         'Perubahan': mutations['Change'],
-        'Perubahan %': mutations['Change_Pct'],
-        'Aksi': np.where(mutations['Change'] > 0, '🟢 AKUMULASI', '🔴 DISTRIBUSI'),
         'Abs_Perubahan': mutations['Change'].abs()
     })
     
@@ -351,8 +343,19 @@ def get_stock_mapping(_df):
         return _df.drop_duplicates('Stock Code').set_index('Stock Code')['Company Name'].to_dict()
     return {}
 
+@st.cache_data(show_spinner=False)
+def get_public_shares_mapping(_df):
+    """Membuat kamus total lembar saham Free Float milik publik per emiten"""
+    if 'Tradeble Shares' in _df.columns and 'Free Float' in _df.columns:
+        # Mengambil data terbaru per saham
+        latest = _df.sort_values('Last Trading Date').groupby('Stock Code').last()
+        # Jumlah Saham Publik = Total Lembar Tradeble * Persentase Free Float
+        return (latest['Tradeble Shares'] * latest['Free Float']).to_dict()
+    return {}
+
 # Panggil pembuat kamus
 DICT_STOCK_NAME = get_stock_mapping(df_transaksi)
+DICT_PUBLIC_SHARES = get_public_shares_mapping(df_transaksi)
 
 def format_stock_label(code):
     """Ambil nama dari kamus. Kecepatan kilat!"""
@@ -532,7 +535,7 @@ with tabs[1]:
         else:
             status_text, status_color = "⏸️ NEUTRAL", "gray"
         
-        # KPI Cards
+        # KPI Cards Row 1 (Main)
         k1, k2, k3, k4, k5 = st.columns(5)
         with k1: st.metric("Harga Terkini", f"Rp {latest['Close']:,.0f}", f"{latest['Change %']:.2f}%")
         with k2: st.metric("Volume Terkini", f"{latest['Volume']/1e6:,.1f} Jt Lbr") 
@@ -545,6 +548,26 @@ with tabs[1]:
                 <div class='kpi-label'>5-Bar Foreign: Rp {recent_foreign/1e9:,.1f}M</div>
             </div>
             """, unsafe_allow_html=True)
+            
+        # ====================================================
+        # 💧 NEW: FLOAT & LIQUIDITY KPI ROW
+        # ====================================================
+        with st.container():
+            st.markdown("<p style='font-size:14px; color:gray; font-weight:bold; margin-top:10px; margin-bottom:5px;'>💧 Float & Liquidity Profile</p>", unsafe_allow_html=True)
+            f1, f2, f3, f4 = st.columns(4)
+            
+            # Pengolahan angka dari data raw terakhir
+            free_float_pct = latest.get('Free Float', 0) * 100 # asumsi raw data desimal 0.15 = 15%
+            tradeble_shrs = latest.get('Tradeble Shares', 0)
+            public_shares_vol = DICT_PUBLIC_SHARES.get(selected_stock, 0)
+            float_mc = tradeble_shrs * latest['Close']
+            turnover_pct = latest.get('Volume_Pct_Tradeble', 0)
+            
+            f1.metric("Free Float (%)", f"{free_float_pct:.2f}%")
+            f2.metric("Public Shares (Barang Beredar)", f"{public_shares_vol/1e6:,.1f} Jt Lbr")
+            f3.metric("Float Market Cap", f"Rp {float_mc/1e9:,.1f} Miliar")
+            f4.metric("Daily Turnover", f"{turnover_pct:.2f}% dari Float")
+        # ====================================================
         
         st.divider()
         
@@ -654,15 +677,22 @@ with tabs[1]:
             yaxis='y3', marker=dict(size=4, color='blue')
         ), row=2, col=1)
         
-        # PANEL 3: VOLUME
+        # ====================================================
+        # 💧 PANEL 3: VOLUME DENGAN TURNOVER INSIGHT
+        # ====================================================
         colors_vol = np.where(
             df_chart['Close'].fillna(0) >= df_chart['Open Price'].fillna(0), 
             '#26a69a', '#ef5350'
         ).tolist()
         
+        # Siapkan Custom Data (Turnover Float) untuk Hover Tooltip
+        vol_customdata = df_chart['Volume_Pct_Tradeble'].fillna(0) if 'Volume_Pct_Tradeble' in df_chart.columns else np.zeros(len(df_chart))
+        
         fig.add_trace(go.Bar(
             x=df_chart['Date_Label'], y=df_chart['Volume'] / 1e6,
-            name='Volume (Juta Lembar)', marker_color=colors_vol, showlegend=False
+            name='Volume (Juta Lembar)', marker_color=colors_vol, showlegend=False,
+            customdata=vol_customdata,
+            hovertemplate='Volume: %{y:,.1f} Jt<br>Turnover Float: %{customdata:.2f}%' # <--- TURNOVER TERLIHAT SAAT HOVER
         ), row=3, col=1)
 
         # MA20_vol Overlay Line
@@ -743,26 +773,38 @@ with tabs[1]:
                     fig_timeline.update_xaxes(type='category', tickangle=90 if interval != "Daily" else 45)
                     st.plotly_chart(fig_timeline, use_container_width=True, config={'displayModeBar': False})
                     
-                    # TABEL MUTASI DETAIL
-                    st.markdown("#### 📋 Detail Mutasi (Foreign vs Local Tracker)")
+                    # TABEL MUTASI DETAIL (DENGAN % SERAPAN FLOAT)
+                    st.markdown("#### 📋 Detail Mutasi & Float Absorption")
                     
                     with st.spinner("🔍 Memuat data mutasi dari cache..."):
                         # Mengambil hasil kalkulasi mutasi dari CACHE
                         df_mutations = get_cached_ksei_mutations(selected_stock, df_kepemilikan)
                     
                     if not df_mutations.empty:
-                        display_mut = df_mutations.sort_values('Abs_Perubahan', ascending=False).head(20).drop(columns=['Abs_Perubahan']).copy()
+                        # Hitung % Serap Float
+                        df_mutations['Serap_Float_Pct'] = np.where(
+                            public_shares_vol > 0, 
+                            (df_mutations['Perubahan'] / public_shares_vol) * 100, 
+                            0
+                        )
+                        # Tambahkan Sinyal 🚨 jika serapan >= 2%
+                        df_mutations['Sinyal'] = np.where(df_mutations['Serap_Float_Pct'].abs() >= 2.0, '🚨', '')
+                        
+                        display_mut = df_mutations.sort_values('Abs_Perubahan', ascending=False).head(20).copy()
+                        display_mut = display_mut[['Periode', 'Rekening / Broker', 'Sebelum', 'Sesudah', 'Perubahan', 'Serap_Float_Pct', 'Sinyal']]
                         
                         st.dataframe(
                             display_mut, 
                             use_container_width=True, 
                             hide_index=True,
                             column_config={
-                                "Periode": st.column_config.TextColumn("Week Periode"),
-                                "Sebelum": st.column_config.NumberColumn("Sebelum (Lembar)", format="%,.0f"),
-                                "Sesudah": st.column_config.NumberColumn("Sesudah (Lembar)", format="%,.0f"),
-                                "Perubahan": st.column_config.NumberColumn("Mutasi (Lembar)", format="%,.0f"),
-                                "Perubahan %": st.column_config.NumberColumn("Mutasi %", format="%.1f%%")
+                                "Periode": st.column_config.TextColumn("Periode"),
+                                "Rekening / Broker": st.column_config.TextColumn("Broker - Pemegang Saham"),
+                                "Sebelum": st.column_config.NumberColumn("Sebelum (Lbr)", format="%,.0f"),
+                                "Sesudah": st.column_config.NumberColumn("Sesudah (Lbr)", format="%,.0f"),
+                                "Perubahan": st.column_config.NumberColumn("Mutasi (Lbr)", format="%,.0f"),
+                                "Serap_Float_Pct": st.column_config.NumberColumn("% Serap Float", format="%.2f%%"),
+                                "Sinyal": st.column_config.TextColumn("Sinyal")
                             }
                         )
                         
@@ -843,9 +885,9 @@ with tabs[2]:
                         display_dist.columns = ['Broker', 'Total Distribusi']
                         st.dataframe(display_dist, use_container_width=True, hide_index=True)
                 
-                # Detail per broker
+                # Detail per broker (DENGAN % SERAPAN FLOAT)
                 st.divider()
-                st.markdown("#### 🔎 Detail Mutasi per Broker")
+                st.markdown("#### 🔎 Detail Mutasi per Broker & Float Absorption")
                 
                 all_brokers = sorted(broker_summary['Kode Broker'].unique())
                 sel_broker = st.selectbox("Pilih Broker", all_brokers, key='m_broker_detail')
@@ -856,12 +898,26 @@ with tabs[2]:
                     
                     if not detail.empty:
                         display_detail = detail[['Kode Efek', 'Nama', 'Awal', 'Akhir', 'Net_Change']].copy()
+                        
+                        # Map Public Shares & Hitung Sinyal
+                        display_detail['Public_Shares'] = display_detail['Kode Efek'].map(DICT_PUBLIC_SHARES).fillna(0)
+                        display_detail['Serap_Float_Pct'] = np.where(
+                            display_detail['Public_Shares'] > 0, 
+                            (display_detail['Net_Change'] / display_detail['Public_Shares']) * 100, 
+                            0
+                        )
+                        display_detail['Sinyal'] = np.where(display_detail['Serap_Float_Pct'].abs() >= 2.0, '🚨', '')
+                        
+                        # Formatting Display
                         display_detail['Awal'] = display_detail['Awal'].apply(lambda x: f"{x:,.0f}")
                         display_detail['Akhir'] = display_detail['Akhir'].apply(lambda x: f"{x:,.0f}")
                         display_detail['Net_Change'] = display_detail['Net_Change'].apply(
                             lambda x: f"+{x:,.0f}" if x > 0 else f"{x:,.0f}"
                         )
-                        display_detail.columns = ['Saham', 'Pemegang', 'Awal', 'Akhir', 'Mutasi']
+                        display_detail['Serap_Float_Pct'] = display_detail['Serap_Float_Pct'].apply(lambda x: f"{x:+.2f}%")
+                        
+                        display_detail = display_detail[['Kode Efek', 'Nama', 'Awal', 'Akhir', 'Net_Change', 'Serap_Float_Pct', 'Sinyal']]
+                        display_detail.columns = ['Saham', 'Pemegang', 'Awal', 'Akhir', 'Mutasi', '% Serap Float', 'Sinyal']
                         st.dataframe(display_detail, use_container_width=True, hide_index=True)
             else:
                 st.info(f"Tidak ada mutasi ≥ {min_mutasi/1e6:.0f} juta dalam periode ini")
