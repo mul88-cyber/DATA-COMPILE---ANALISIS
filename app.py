@@ -304,12 +304,22 @@ def get_cached_ksei_mutations(stock_code, _df_ksei):
     ksei_stock = _df_ksei[_df_ksei['Kode Efek'] == stock_code].copy()
     return compute_ksei_mutations_optimized(ksei_stock)
 
+@st.cache_data(show_spinner=False)
+def get_stock_mapping(_df):
+    """Membuat kamus/dictionary Nama Perusahaan sekali saja saat awal loading"""
+    if 'Company Name' in _df.columns:
+        # Ambil nama unik, jadikan dictionary { 'BBCA': 'Bank Central Asia Tbk', ... }
+        return _df.drop_duplicates('Stock Code').set_index('Stock Code')['Company Name'].to_dict()
+    return {}
+
+# Panggil pembuat kamus
+DICT_STOCK_NAME = get_stock_mapping(df_transaksi)
+
 def format_stock_label(code):
-    """Format label selectbox dengan nama perusahaan"""
-    if 'Company Name' in df_transaksi.columns:
-        name_series = df_transaksi[df_transaksi['Stock Code'] == code]['Company Name']
-        if not name_series.empty:
-            return f"{code} - {name_series.iloc[0]}"
+    """Ambil nama dari kamus. Kecepatan kilat!"""
+    name = DICT_STOCK_NAME.get(code, "")
+    if name:
+        return f"{code} - {name}"
     return code
 
 
