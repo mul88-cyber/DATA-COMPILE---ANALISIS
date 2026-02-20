@@ -349,8 +349,8 @@ def get_public_shares_mapping(_df):
     if 'Tradeble Shares' in _df.columns and 'Free Float' in _df.columns:
         # Mengambil data terbaru per saham
         latest = _df.sort_values('Last Trading Date').groupby('Stock Code').last()
-        # Jumlah Saham Publik = Total Lembar Tradeble * Persentase Free Float
-        return (latest['Tradeble Shares'] * latest['Free Float']).to_dict()
+        # Jumlah Saham Publik = Total Lembar Tradeble * (Persentase Free Float / 100)
+        return (latest['Tradeble Shares'] * (latest['Free Float'] / 100)).to_dict()
     return {}
 
 # Panggil pembuat kamus
@@ -506,7 +506,8 @@ with tabs[1]:
         latest = df_stock_raw.iloc[-1]
         
         total_foreign = df_chart['Net Foreign Flow'].sum()
-        max_aoVol = df_chart['AOVol_Ratio'].max()
+        # GANTI LOGIC AOVOL MAX MENJADI FREKUENSI SPIKE
+        aovol_spike_count = len(df_chart[df_chart['AOVol_Ratio'] > 1.5])
         
         # Hitung status berdasarkan trend 5 data terakhir
         if len(df_chart) >= 5:
@@ -515,7 +516,7 @@ with tabs[1]:
             price_change = recent_prices.iloc[-1] - recent_prices.iloc[0]
             price_change_pct = (price_change / recent_prices.iloc[0] * 100) if recent_prices.iloc[0] > 0 else 0
         else:
-            recent_foreign = total_foreign
+            recent_foreign = df_chart['Net Foreign Flow'].sum() # Fallback total
             price_change = 0
             price_change_pct = 0
         
@@ -540,7 +541,7 @@ with tabs[1]:
         with k1: st.metric("Harga Terkini", f"Rp {latest['Close']:,.0f}", f"{latest['Change %']:.2f}%")
         with k2: st.metric("Volume Terkini", f"{latest['Volume']/1e6:,.1f} Jt Lbr") 
         with k3: st.metric("VWMA 20D Anchor", f"Rp {latest['VWMA_20D']:,.0f}" if 'VWMA_20D' in latest else "N/A")
-        with k4: st.metric("Max AOVol Ratio", f"{max_aoVol:.1f}x" if max_aoVol > 0 else "N/A")
+        with k4: st.metric("AOVol Spikes (>1.5x)", f"{aovol_spike_count} Kali") # <--- UPDATE DISINI
         with k5: 
             st.markdown(f"""
             <div class='kpi-card'>
@@ -557,7 +558,7 @@ with tabs[1]:
             f1, f2, f3, f4 = st.columns(4)
             
             # Pengolahan angka dari data raw terakhir
-            free_float_pct = latest.get('Free Float', 0) * 100 # asumsi raw data desimal 0.15 = 15%
+            free_float_pct = latest.get('Free Float', 0) # <--- DIHAPUS KALI 100-NYA
             tradeble_shrs = latest.get('Tradeble Shares', 0)
             public_shares_vol = DICT_PUBLIC_SHARES.get(selected_stock, 0)
             float_mc = tradeble_shrs * latest['Close']
