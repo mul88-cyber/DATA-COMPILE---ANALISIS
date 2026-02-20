@@ -531,6 +531,7 @@ with tabs[0]:
                     col_target_name = "Whale Spikes" if "Whale" in target_deteksi else "Retail Drops"
                     score_emoji = "🚀" if "Whale" in target_deteksi else "🩸"
                     
+                    # PASTIKAN NAMA KOLOM INI MATCH DENGAN STYLER DI BAWAH
                     display_df.columns = ['Kode', 'Harga', 'Change Terakhir', 'Avg Value/Hari (M)', '% Serap Float/Hari', 
                                          col_target_name, 'Max AOV Ratio', 'Net Foreign (M)', 'Max Anomali', 'Conviction Score']
                     
@@ -549,8 +550,8 @@ with tabs[0]:
                         styled_df = styled_df.background_gradient(subset=['Conviction Score'], cmap='Reds')
                         styled_df = styled_df.background_gradient(subset=[col_target_name], cmap='Reds')
                     
-                    # 2. Warna Biru untuk Serapan Float (Makin pekat = makin kering barang)
-                    styled_df = styled_df.background_gradient(subset=['% Serap Float'], cmap='Blues')
+                    # 2. Warna Biru untuk Serapan Float (Ubah jadi % Serap Float/Hari)
+                    styled_df = styled_df.background_gradient(subset=['% Serap Float/Hari'], cmap='Blues')
                     
                     # 3. Warna Ungu untuk Kekuatan Anomali Bandar
                     styled_df = styled_df.background_gradient(subset=['Max Anomali'], cmap='Purples')
