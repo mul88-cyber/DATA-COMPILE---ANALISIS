@@ -131,6 +131,26 @@ def load_and_preprocess_data():
             if col in df_transaksi.columns:
                 df_transaksi[col] = pd.to_numeric(df_transaksi[col], errors='coerce').fillna(0)
 
+        # ====================================================
+        # 🛠️ KOREKSI DATA ASING (UBAH LEMBAR JADI RUPIAH)
+        # ====================================================
+        # 1. Hitung harga rata-rata transaksi harian (VWAP)
+        df_transaksi['Daily_VWAP'] = np.where(
+            df_transaksi['Volume'] > 0, 
+            df_transaksi['Value'] / df_transaksi['Volume'], 
+            df_transaksi['Close'] # Fallback pakai harga close jika volume 0
+        )
+        
+        # 2. Simpan data aslinya (lembar) buat jaga-jaga
+        if 'Net Foreign Flow' in df_transaksi.columns:
+            df_transaksi['Net_Foreign_Volume'] = df_transaksi['Net Foreign Flow']
+            
+            # 3. Ubah kolom menjadi nominal Rupiah
+            df_transaksi['Net Foreign Flow'] = df_transaksi['Net Foreign Flow'] * df_transaksi['Daily_VWAP']
+            df_transaksi['Foreign Buy'] = df_transaksi['Foreign Buy'] * df_transaksi['Daily_VWAP']
+            df_transaksi['Foreign Sell'] = df_transaksi['Foreign Sell'] * df_transaksi['Daily_VWAP']
+        # ====================================================
+
         # Hitung AOVol (Average Order Volume) moving average
         df_transaksi = df_transaksi.sort_values(['Stock Code', 'Last Trading Date'])
         df_transaksi['AOVol_MA20'] = df_transaksi.groupby('Stock Code')['Avg_Order_Volume'].transform(
