@@ -1126,94 +1126,173 @@ with tabs[2]:
 # ==================== TAB 4: MARKET MAP ====================
 with tabs[3]:
     st.markdown("### 🗺️ Market Map & Foreign Radar")
+    st.markdown("Melacak jejak arus dana asing (Foreign Flow) di seluruh market untuk mencari saham yang sedang diakumulasi/didistribusi secara masif.")
     
-    # Foreign Flow Timeframe
-    st.markdown("#### 🌍 Top Foreign Flow")
-    
-    col_period, col_top, col_sort = st.columns(3)
-    with col_period:
-        ff_period = st.selectbox("Rentang Waktu", 
-                                ["Hari Ini", "5 Hari", "10 Hari", "20 Hari", "30 Hari", "60 Hari"], 
-                                key='ff_time')
-    with col_top:
-        top_n_ff = st.slider("Top N", 5, 30, 20, key='top_ff')
-    with col_sort:
-        sort_ff = st.selectbox("Urut Berdasarkan", ["Net Foreign", "Nilai Transaksi", "Volume"], key='sort_ff')
-    
+    with st.container():
+        st.markdown('<div class="filter-container">', unsafe_allow_html=True)
+        col_period, col_top, col_sort = st.columns(3)
+        with col_period:
+            ff_period = st.selectbox("Rentang Waktu", 
+                                    ["Hari Ini", "5 Hari", "10 Hari", "20 Hari", "30 Hari", "60 Hari"], 
+                                    key='ff_time')
+        with col_top:
+            top_n_ff = st.slider("Tampilkan Top N Saham", 5, 50, 20, key='top_ff')
+        with col_sort:
+            sort_ff = st.selectbox("Urutkan Bubble Chart Berdasarkan", ["Net Foreign", "Nilai Transaksi", "Volume"], key='sort_ff')
+        st.markdown('</div>', unsafe_allow_html=True)
+        
     days_ff_map = {"Hari Ini": 0, "5 Hari": 5, "10 Hari": 10, "20 Hari": 20, 
                    "30 Hari": 30, "60 Hari": 60}
     days_back = days_ff_map[ff_period]
     
-    # Filter Data
+    # Filter Data berdasarkan periode
     if days_back == 0:
-        ff_data = df_transaksi[df_transaksi['Last Trading Date'].dt.date == max_date].copy()
-        if not ff_data.empty:
-            ff_data = ff_data.groupby('Stock Code').agg({
-                'Net Foreign Flow': 'sum',
-                'Value': 'sum',
-                'Close': 'last',
-                'Change %': 'mean',
-                'Volume': 'sum'
-            }).reset_index()
+        mask_ff = (df_transaksi['Last Trading Date'].dt.date == max_date)
     else:
         start_date_ff = max_date - timedelta(days=days_back)
         mask_ff = (df_transaksi['Last Trading Date'].dt.date >= start_date_ff) & \
                   (df_transaksi['Last Trading Date'].dt.date <= max_date)
-        ff_data = df_transaksi[mask_ff].groupby('Stock Code').agg({
-            'Net Foreign Flow': 'sum',
-            'Value': 'sum',
-            'Close': 'last',
-            'Change %': 'mean',
-            'Volume': 'sum'
-        }).reset_index()
+                  
+    ff_data = df_transaksi[mask_ff].groupby('Stock Code').agg({
+        'Net Foreign Flow': 'sum',
+        'Value': 'sum',
+        'Close': 'last',
+        'Change %': 'mean', # Rata-rata pergerakan harga
+        'Volume': 'sum'
+    }).reset_index()
     
     if not ff_data.empty and len(ff_data) > 0:
-        # Sort berdasarkan pilihan
+        
+        # --- MARKET LEVEL KPI (Arus Dana Keseluruhan) ---
+        total_inflow = ff_data[ff_data['Net Foreign Flow'] > 0]['Net Foreign Flow'].sum()
+        total_outflow = ff_data[ff_data['Net Foreign Flow'] < 0]['Net Foreign Flow'].sum()
+        net_market_flow = total_inflow + total_outflow
+        
+        st.markdown("#### 🌊 Market Foreign Flow Summary")
+        mk1, mk2, mk3 = st.columns(3)
+        mk1.metric("Gross Foreign Inflow", f"Rp {total_inflow/1e9:,.1f} Miliar", "Akumulasi Market")
+        mk2.metric("Gross Foreign Outflow", f"Rp {abs(total_outflow)/1e9:,.1f} Miliar", "-Distribusi Market")
+        mk3.metric("Net Market Foreign Flow", f"Rp {net_market_flow/1e9:+,.1f} Miliar", 
+                   "Bullish" if net_market_flow > 0 else "Bearish", 
+                   delta_color="normal" if net_market_flow > 0 else "inverse")
+        
+        st.divider()
+        
+        # Map Nama Saham
+        ff_data['Nama'] = ff_data['Stock Code'].map(DICT_STOCK_NAME).fillna('-')
+        ff_data['Saham'] = ff_data['Stock Code'] + " - " + ff_data['Nama']
+        
+        col_f1, col_f2 = st.columns(2)
+        
+        # =========================================================
+        # 🟢 TABEL TOP FOREIGN BUY (HIJAU)
+        # =========================================================
+        with col_f1:
+            st.markdown(f"#### 🟢 Top {top_n_ff} Foreign Buy ({ff_period})")
+            top_buy = ff_data.nlargest(top_n_ff, 'Net Foreign Flow')
+            if not top_buy.empty:
+                display_buy = top_buy[['Saham', 'Close', 'Net Foreign Flow', 'Change %']].copy()
+                display_buy['Net Foreign Flow (M)'] = display_buy['Net Foreign Flow'] / 1e9
+                display_buy = display_buy.drop(columns=['Net Foreign Flow'])
+                
+                styled_buy = display_buy.style
+                # Gradien Hijau untuk Inflow
+                styled_buy = styled_buy.background_gradient(subset=['Net Foreign Flow (M)'], cmap='Greens')
+                # Teks Hijau/Merah untuk Change %
+                def color_pos_neg(val):
+                    if val > 0: return 'color: #10b981; font-weight: bold;'
+                    if val < 0: return 'color: #ef4444; font-weight: bold;'
+                    return ''
+                styled_buy = styled_buy.map(color_pos_neg, subset=['Change %'])
+                
+                st.dataframe(
+                    styled_buy, 
+                    use_container_width=True, hide_index=True, height=500,
+                    column_config={
+                        "Saham": st.column_config.TextColumn("Saham", width="medium"),
+                        "Close": st.column_config.NumberColumn("Harga", format="Rp %d"),
+                        "Net Foreign Flow (M)": st.column_config.NumberColumn("Net Buy (M)", format="Rp %.1f M"),
+                        "Change %": st.column_config.NumberColumn("Change", format="%+.2f%%")
+                    }
+                )
+            
+        # =========================================================
+        # 🔴 TABEL TOP FOREIGN SELL (MERAH)
+        # =========================================================
+        with col_f2:
+            st.markdown(f"#### 🔴 Top {top_n_ff} Foreign Sell ({ff_period})")
+            top_sell = ff_data.nsmallest(top_n_ff, 'Net Foreign Flow')
+            if not top_sell.empty:
+                display_sell = top_sell[['Saham', 'Close', 'Net Foreign Flow', 'Change %']].copy()
+                # Absolutkan minusnya untuk gradien warna
+                display_sell['Net Foreign Flow (M)'] = display_sell['Net Foreign Flow'] / 1e9
+                display_sell = display_sell.drop(columns=['Net Foreign Flow'])
+                
+                styled_sell = display_sell.style
+                # Gradien Merah (Reds_r karena angkanya minus, jadi angka terendah/minus terbesar warnanya paling pekat)
+                styled_sell = styled_sell.background_gradient(subset=['Net Foreign Flow (M)'], cmap='Reds_r')
+                styled_sell = styled_sell.map(color_pos_neg, subset=['Change %'])
+                
+                st.dataframe(
+                    styled_sell, 
+                    use_container_width=True, hide_index=True, height=500,
+                    column_config={
+                        "Saham": st.column_config.TextColumn("Saham", width="medium"),
+                        "Close": st.column_config.NumberColumn("Harga", format="Rp %d"),
+                        "Net Foreign Flow (M)": st.column_config.NumberColumn("Net Sell (M)", format="Rp %.1f M"),
+                        "Change %": st.column_config.NumberColumn("Change", format="%+.2f%%")
+                    }
+                )
+        
+        # =========================================================
+        # 📊 VISUALISASI BUBBLE CHART
+        # =========================================================
+        st.divider()
+        st.markdown("#### 📊 Foreign Flow Scatter Map")
+        
         sort_col = {
             "Net Foreign": "Net Foreign Flow",
             "Nilai Transaksi": "Value",
             "Volume": "Volume"
         }[sort_ff]
         
-        ff_data = ff_data.sort_values(sort_col, ascending=False)
+        # Ambil Top 75 berdasarkan urutan pilihan user agar chart tidak keramaian
+        ff_viz = ff_data.sort_values(sort_col, ascending=False).head(75).copy()
         
-        col_f1, col_f2 = st.columns(2)
-        
-        with col_f1:
-            st.markdown(f"#### 🟢 Top {top_n_ff} Foreign Buy ({ff_period})")
-            top_buy = ff_data.nlargest(top_n_ff, 'Net Foreign Flow')
-            if not top_buy.empty:
-                display_buy = top_buy[['Stock Code', 'Close', 'Net Foreign Flow', 'Change %']].copy()
-                display_buy['Close'] = display_buy['Close'].apply(lambda x: f"Rp {x:,.0f}")
-                display_buy['Net Foreign Flow'] = display_buy['Net Foreign Flow'].apply(lambda x: f"Rp {x:,.0f}")
-                display_buy['Change %'] = display_buy['Change %'].apply(lambda x: f"{x:.2f}%")
-                display_buy.columns = ['Kode', 'Harga', 'Net Buy', 'Change']
-                st.dataframe(display_buy, use_container_width=True, hide_index=True)
-            
-        with col_f2:
-            st.markdown(f"#### 🔴 Top {top_n_ff} Foreign Sell ({ff_period})")
-            top_sell = ff_data.nsmallest(top_n_ff, 'Net Foreign Flow')
-            if not top_sell.empty:
-                display_sell = top_sell[['Stock Code', 'Close', 'Net Foreign Flow', 'Change %']].copy()
-                display_sell['Close'] = display_sell['Close'].apply(lambda x: f"Rp {x:,.0f}")
-                display_sell['Net Foreign Flow'] = display_sell['Net Foreign Flow'].apply(lambda x: f"Rp {x:,.0f}")
-                display_sell['Change %'] = display_sell['Change %'].apply(lambda x: f"{x:.2f}%")
-                display_sell.columns = ['Kode', 'Harga', 'Net Sell', 'Change']
-                st.dataframe(display_sell, use_container_width=True, hide_index=True)
-        
-        # Visualisasi
-        st.divider()
-        st.markdown("#### 📊 Foreign Flow Distribution")
-        
-        ff_viz = ff_data.head(50).copy()
+        # Size Bubble berdasarkan nilai absolut Net Foreign Flow
         ff_viz['Abs_Net'] = abs(ff_viz['Net Foreign Flow'])
+        ff_viz['Val_M'] = ff_viz['Value'] / 1e9
+        ff_viz['Net_M'] = ff_viz['Net Foreign Flow'] / 1e9
         
-        fig = px.scatter(ff_viz, x='Value', y='Net Foreign Flow',
-                        text='Stock Code', size='Abs_Net',
-                        color='Net Foreign Flow', color_continuous_scale='RdYlGn',
-                        title=f"Foreign Flow Map - Size: Nilai Transaksi, Warna: Net Foreign ({ff_period})")
-        fig.update_traces(textposition='top center')
-        fig.update_layout(height=500)
+        fig = px.scatter(
+            ff_viz, x='Val_M', y='Net_M',
+            text='Stock Code', size='Abs_Net',
+            color='Net_M', color_continuous_scale='RdYlGn',
+            color_continuous_midpoint=0, # Pastikan 0 ada di warna kuning/netral
+            hover_name='Saham',
+            hover_data={
+                'Stock Code': False,
+                'Val_M': ':,.1f M',
+                'Net_M': ':,.1f M',
+                'Abs_Net': False,
+                'Change %': ':.2f%'
+            },
+            labels={'Val_M': 'Total Nilai Transaksi (Miliar Rp)', 'Net_M': 'Net Foreign Flow (Miliar Rp)'},
+            title=f"Bubble Size: Net Foreign Flow (Absolut) | Top 75 Berdasarkan {sort_ff}"
+        )
+        
+        fig.update_traces(
+            textposition='top center', 
+            marker=dict(line=dict(width=1, color='DarkSlateGrey')) # Tambah outline di bubble biar elegan
+        )
+        fig.update_layout(
+            height=600, 
+            hovermode='closest',
+            xaxis=dict(showgrid=True, gridcolor='LightGray'),
+            yaxis=dict(showgrid=True, gridcolor='LightGray', zeroline=True, zerolinecolor='black', zerolinewidth=2),
+            plot_bgcolor='white'
+        )
+        
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 # Footer
