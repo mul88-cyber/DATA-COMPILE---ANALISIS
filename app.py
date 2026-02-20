@@ -577,6 +577,34 @@ with tabs[1]:
                     text=[f"Anomali: {x:.1f}x<br>Harga: Rp {y:,.0f}" for x, y in zip(anomaly_spikes['Big_Player_Anomaly'], anomaly_spikes['Close'])],
                     hoverinfo='text'
                 ), row=1, col=1)
+
+        
+        # 🐋 MARKER: WHALE SIGNAL & SPLIT SIGNAL
+        if 'Whale_Signal' in df_chart.columns:
+            # Asumsi Whale_Signal berisi True/1
+            ws = df_chart[df_chart['Whale_Signal'] == True].dropna(subset=['High'])
+            if not ws.empty:
+                fig.add_trace(go.Scatter(
+                    x=ws['Date_Label'], 
+                    y=ws['High'] * 1.02, # Muncul sedikit di atas harga High
+                    mode='markers', 
+                    marker=dict(symbol='triangle-down', size=12, color='#00cc00', line=dict(width=1, color='black')), 
+                    name='🐋 Whale Buy',
+                    hoverinfo='name+y'
+                ), row=1, col=1)
+        
+        if 'Split_Signal' in df_chart.columns:
+            # Asumsi Split_Signal berisi True/1
+            ss = df_chart[df_chart['Split_Signal'] == True].dropna(subset=['Low'])
+            if not ss.empty:
+                fig.add_trace(go.Scatter(
+                    x=ss['Date_Label'], 
+                    y=ss['Low'] * 0.98, # Muncul sedikit di bawah harga Low
+                    mode='markers', 
+                    marker=dict(symbol='triangle-up', size=12, color='#ff4444', line=dict(width=1, color='black')), 
+                    name='✂️ Split/Retail',
+                    hoverinfo='name+y'
+                ), row=1, col=1)
         
         # PANEL 2: AOVOL ANALYSIS (Sesuai Referensi Baru)
         # Kita gunakan AOVol_MA20 dari tahap preprocessing
