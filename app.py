@@ -578,13 +578,21 @@ with tabs[1]:
                     hoverinfo='text'
                 ), row=1, col=1)
         
-        # PANEL 2: AOVOL ANALYSIS
+        # PANEL 2: AOVOL ANALYSIS (Sesuai Referensi Baru)
+        # Kita gunakan AOVol_MA20 dari tahap preprocessing
+        ma_col = 'AOVol_MA20' 
+        ma_vals = df_chart[ma_col].fillna(0).values if ma_col in df_chart.columns else np.zeros(len(df_chart))
+        
         fig.add_trace(go.Scatter(
-            x=df_chart['Date_Label'], y=df_chart['Avg_Order_Volume'] / 1e6,
-            name='AOVol (Juta Lembar)', mode='lines+markers',
-            line=dict(color='purple', width=2.5), marker=dict(size=4, color='purple'),
-            fill='tozeroy', fillcolor='rgba(128,0,128,0.1)'
+            x=df_chart['Date_Label'], y=df_chart['AOVol_Ratio'],
+            mode='lines', line=dict(color='#9c88ff', width=2), name='AOV Ratio',
+            customdata=np.stack((df_chart['Avg_Order_Volume'], ma_vals), axis=-1),
+            hovertemplate='Ratio: %{y:.2f}x<br>Avg: %{customdata[0]:,.0f}<br>MA: %{customdata[1]:,.0f}'
         ), row=2, col=1)
+        
+        # Garis Batas (Ref Lines)
+        fig.add_hline(y=1.5, line_dash="dash", line_color="green", row=2, col=1)
+        fig.add_hline(y=0.6, line_dash="dash", line_color="red", row=2, col=1)
         
         # GARIS BIRU SOLID UNTUK RATIO
         fig.add_trace(go.Scatter(
