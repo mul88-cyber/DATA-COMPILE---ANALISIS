@@ -529,6 +529,58 @@ with tabs[0]:
                     display_df.columns = ['Kode', 'Harga', 'Change Terakhir', 'Avg Value/Hari (M)', '% Serap Float', 
                                          col_target_name, 'Max AOV Ratio', 'Net Foreign (M)', 'Max Anomali', 'Conviction Score']
                     
+                    # ==========================================
+                    # 🎨 COLOR SCALING (STYLING) SUPER FULL
+                    # ==========================================
+                    styled_df = display_df.style
+                    
+                    # 1. Warna Khusus Target (Whale = Hijau, Retail = Merah)
+                    if "Whale" in target_deteksi:
+                        styled_df = styled_df.background_gradient(subset=['Max AOV Ratio'], cmap='Greens', vmin=1.5, vmax=5.0)
+                        styled_df = styled_df.background_gradient(subset=['Conviction Score'], cmap='Greens')
+                        styled_df = styled_df.background_gradient(subset=[col_target_name], cmap='Greens')
+                    else:
+                        styled_df = styled_df.background_gradient(subset=['Max AOV Ratio'], cmap='Reds_r', vmin=0.0, vmax=0.6)
+                        styled_df = styled_df.background_gradient(subset=['Conviction Score'], cmap='Reds')
+                        styled_df = styled_df.background_gradient(subset=[col_target_name], cmap='Reds')
+                    
+                    # 2. Warna Biru untuk Serapan Float (Makin pekat = makin kering barang)
+                    styled_df = styled_df.background_gradient(subset=['% Serap Float'], cmap='Blues')
+                    
+                    # 3. Warna Ungu untuk Kekuatan Anomali Bandar
+                    styled_df = styled_df.background_gradient(subset=['Max Anomali'], cmap='Purples')
+                    
+                    # 4. Warna Oranye untuk Rata-rata Transaksi (Likuiditas)
+                    styled_df = styled_df.background_gradient(subset=['Avg Value/Hari (M)'], cmap='Oranges')
+                    
+                    # 5. Warna Teks Otomatis (Hijau naik/Inflow, Merah turun/Outflow)
+                    def color_pos_neg(val):
+                        if val > 0: return 'color: #10b981; font-weight: bold;' # Hijau
+                        if val < 0: return 'color: #ef4444; font-weight: bold;' # Merah
+                        return ''
+                    
+                    # Terapkan ke kolom Change % dan Net Foreign Flow
+                    styled_df = styled_df.map(color_pos_neg, subset=['Change Terakhir', 'Net Foreign (M)'])
+                    
+                    # --- TAMPILAN TABEL DENGAN COLUMN CONFIG & STYLER ---
+                    st.dataframe(
+                        styled_df, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        height=550,
+                        column_config={
+                            "Harga": st.column_config.NumberColumn("Harga", format="Rp %d"),
+                            "Change Terakhir": st.column_config.NumberColumn("Change", format="%+.2f %%"),
+                            "Avg Value/Hari (M)": st.column_config.NumberColumn("Avg Value/Hari (M)", format="Rp %.1f M"),
+                            "% Serap Float": st.column_config.NumberColumn("% Serap Float", format="%.2f %%"),
+                            col_target_name: st.column_config.NumberColumn(col_target_name, format="%d Kali"),
+                            "Max AOV Ratio": st.column_config.NumberColumn("Max AOV Ratio", format="%.2f x"),
+                            "Net Foreign (M)": st.column_config.NumberColumn("Net Foreign (M)", format="Rp %.1f M"),
+                            "Max Anomali": st.column_config.NumberColumn("Max Anomali", format="%.1f x"),
+                            "Conviction Score": st.column_config.NumberColumn("Conviction Score", format=f"{score_emoji} %.1f")
+                        }
+                    )
+                    
                     # --- TAMPILAN TABEL DENGAN COLUMN CONFIG (BISA DI-SORT) ---
                     st.dataframe(
                         display_df, 
