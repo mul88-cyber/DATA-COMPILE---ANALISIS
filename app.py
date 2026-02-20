@@ -277,7 +277,7 @@ with tabs[0]:
             else:
                 st.info("Tidak ada saham yang memenuhi kriteria")
 
-# ==================== TAB 2: DEEP DIVE & CHART (V3.1 INSTITUTIONAL) ====================
+# ==================== TAB 2: DEEP DIVE & CHART (V3.2 OPTIMIZED) ====================
 with tabs[1]:
     st.markdown("### 🔍 Deep Dive: Multi-Timeframe Analytics & VWMA Anchor")
     
@@ -303,21 +303,23 @@ with tabs[1]:
     period_map = {"3 Bulan": 90, "6 Bulan": 180, "1 Tahun": 365, "2 Tahun": 730, "Semua Data": 9999}
     days_back = period_map[chart_len]
     
-    # Filter data untuk saham terpilih
-    df_stock = df_transaksi[df_transaksi['Stock Code'] == selected_stock].copy().sort_values('Last Trading Date')
+    # ⚡ OPTIMASI KECEPATAN: Filter data untuk saham terpilih dulu
+    df_stock = df_transaksi[df_transaksi['Stock Code'] == selected_stock].copy()
     
     if not df_stock.empty:
-        # Potong berdasarkan periode
+        # Potong berdasarkan periode agar data yang diproses lebih sedikit
         if chart_len != "Semua Data":
             start_date_chart = max_date - timedelta(days=days_back)
             df_stock = df_stock[df_stock['Last Trading Date'].dt.date >= start_date_chart]
+            
+        df_stock = df_stock.sort_values('Last Trading Date')
         
-        # PERBAIKAN: Handle Open Price yang kosong
+        # PERBAIKAN: Handle Open Price yang kosong (menggunakan ffill/bfill method baru agar lebih cepat)
         df_stock['Open Price'] = df_stock['Open Price'].fillna(df_stock['Previous'])
         df_stock['Open Price'] = df_stock['Open Price'].fillna(df_stock['Close'])
-        df_stock['Open Price'] = df_stock['Open Price'].fillna(method='ffill').fillna(method='bfill')
+        df_stock['Open Price'] = df_stock['Open Price'].ffill().bfill()
         
-        # Kamus agregasi resampling (menambahkan VWMA dan MA Vol)
+        # Kamus agregasi resampling
         agg_dict = {
             'Open Price': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last',
             'Volume': 'sum', 'Net Foreign Flow': 'sum', 'Big_Player_Anomaly': 'max',
@@ -325,15 +327,14 @@ with tabs[1]:
             'Change %': 'last'
         }
         
-        # Masukkan kolom raw baru jika ada
         if 'VWMA_20D' in df_stock.columns:
             agg_dict['VWMA_20D'] = 'last'
         if 'MA20_vol' in df_stock.columns:
             agg_dict['MA20_vol'] = 'mean'
             
-        # RESAMPLING UNTUK INTERVAL WEEKLY/MONTHLY
+        # ⚡ OPTIMASI RESAMPLING UNTUK INTERVAL WEEKLY/MONTHLY
         if interval == "Weekly":
-            df_chart = df_stock.set_index('Last Trading Date').resample('W').agg(agg_dict).dropna(subset=['Close']).reset_index()
+            df_chart = df_stock.set_index('Last Trading Date').resample('W-FRI').agg(agg_dict).dropna(subset=['Close']).reset_index()
         elif interval == "Monthly":
             df_chart = df_stock.set_index('Last Trading Date').resample('M').agg(agg_dict).dropna(subset=['Close']).reset_index()
         else:
@@ -342,15 +343,16 @@ with tabs[1]:
         if len(df_chart) == 0:
             st.warning(f"Tidak ada data untuk interval {interval} dalam periode ini")
             st.stop()
+            
+        # 🎨 SOLUSI CHART OMPONG: Ubah format tanggal menjadi String (Category)
+        df_chart['Date_Label'] = df_chart['Last Trading Date'].dt.strftime('%d-%b-%Y')
         
         # Latest data untuk KPI
         latest = df_stock.iloc[-1]
         total_foreign = df_chart['Net Foreign Flow'].sum()
-        avg_aoVol = df_chart['Avg_Order_Volume'].mean()
         max_aoVol = df_chart['AOVol_Ratio'].max()
-        total_volume = df_chart['Volume'].sum() / 1e6
         
-        # Hitung status berdasarkan trend 5 hari terakhir
+        # Hitung status berdasarkan trend 5 data terakhir
         if len(df_chart) >= 5:
             recent_foreign = df_chart['Net Foreign Flow'].tail(5).sum()
             recent_prices = df_chart['Close'].tail(5)
@@ -361,7 +363,7 @@ with tabs[1]:
             price_change = 0
             price_change_pct = 0
         
-        # Tentukan status logic tetap utuh
+        # Tentukan status logic
         if recent_foreign > 1e9 and price_change_pct > 3:
             status_text, status_color = "🚀 AKUMULASI KUAT", "darkgreen"
         elif recent_foreign > 0 and price_change_pct > 0:
@@ -377,17 +379,17 @@ with tabs[1]:
         else:
             status_text, status_color = "⏸️ NEUTRAL", "gray"
         
-        # KPI Cards (Tetap dipertahankan kecanggihannya)
+        # KPI Cards
         k1, k2, k3, k4, k5 = st.columns(5)
         with k1: st.metric("Harga Terkini", f"Rp {latest['Close']:,.0f}", f"{latest['Change %']:.2f}%")
-        with k2: st.metric("Volume Terkini", f"{latest['Volume']/1e6:,.1f} Jt") # Diganti jadi terkini agar relevan
+        with k2: st.metric("Volume Terkini", f"{latest['Volume']/1e6:,.1f} Jt Lbr") 
         with k3: st.metric("VWMA 20D Anchor", f"Rp {latest['VWMA_20D']:,.0f}" if 'VWMA_20D' in latest else "N/A")
         with k4: st.metric("Max AOVol Ratio", f"{max_aoVol:.1f}x" if max_aoVol > 0 else "N/A")
         with k5: 
             st.markdown(f"""
             <div class='kpi-card'>
                 <div class='kpi-value' style='color:{status_color}; font-size:16px;'>{status_text}</div>
-                <div class='kpi-label'>5D Foreign: Rp {recent_foreign/1e9:,.1f}M</div>
+                <div class='kpi-label'>5-Bar Foreign: Rp {recent_foreign/1e9:,.1f}M</div>
             </div>
             """, unsafe_allow_html=True)
         
@@ -405,19 +407,19 @@ with tabs[1]:
             )
         )
         
-        # PANEL 1: CANDLESTICK
+        # PANEL 1: CANDLESTICK (Menggunakan Date_Label agar rapat)
         fig.add_trace(go.Candlestick(
-            x=df_chart['Last Trading Date'], open=df_chart['Open Price'],
+            x=df_chart['Date_Label'], open=df_chart['Open Price'],
             high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'],
             name="Price", showlegend=False,
             increasing_line_color='#26a69a', decreasing_line_color='#ef5350',
             increasing_fillcolor='#26a69a', decreasing_fillcolor='#ef5350'
         ), row=1, col=1)
         
-        # TAMBAHAN V3.1: VWMA_20D Overlay Line
+        # VWMA_20D Overlay Line
         if 'VWMA_20D' in df_chart.columns:
             fig.add_trace(go.Scatter(
-                x=df_chart['Last Trading Date'], y=df_chart['VWMA_20D'],
+                x=df_chart['Date_Label'], y=df_chart['VWMA_20D'],
                 mode='lines', name='⚓ VWMA 20D (Bandar Avg)',
                 line=dict(color='blue', width=2, dash='dot'),
                 hoverinfo='name+y'
@@ -428,10 +430,10 @@ with tabs[1]:
             aoVol_spikes = df_chart[df_chart['AOVol_Ratio'] > 1.5].dropna(subset=['Close'])
             if not aoVol_spikes.empty:
                 fig.add_trace(go.Scatter(
-                    x=aoVol_spikes['Last Trading Date'], y=aoVol_spikes['High'] * 1.02,
+                    x=aoVol_spikes['Date_Label'], y=aoVol_spikes['High'] * 1.02,
                     mode='markers', name='⭐ AOVol Spike',
                     marker=dict(symbol='star', size=14, color='gold', line=dict(width=2, color='orange')),
-                    text=[f"AOVol: {x:.1f}x<br>Value: Rp {y:,.0f}" for x, y in zip(aoVol_spikes['AOVol_Ratio'], aoVol_spikes['Avg_Order_Volume'])],
+                    text=[f"Ratio: {x:.1f}x<br>Volume: {y:,.0f} Lembar" for x, y in zip(aoVol_spikes['AOVol_Ratio'], aoVol_spikes['Avg_Order_Volume'])],
                     hoverinfo='text'
                 ), row=1, col=1)
         
@@ -440,40 +442,41 @@ with tabs[1]:
             anomaly_spikes = df_chart[df_chart['Big_Player_Anomaly'] > 3].dropna(subset=['Close'])
             if not anomaly_spikes.empty:
                 fig.add_trace(go.Scatter(
-                    x=anomaly_spikes['Last Trading Date'], y=anomaly_spikes['Low'] * 0.98,
+                    x=anomaly_spikes['Date_Label'], y=anomaly_spikes['Low'] * 0.98,
                     mode='markers', name='💎 BP Anomaly',
                     marker=dict(symbol='diamond', size=12, color='magenta', line=dict(width=2, color='purple')),
                     text=[f"Anomali: {x:.1f}x<br>Harga: Rp {y:,.0f}" for x, y in zip(anomaly_spikes['Big_Player_Anomaly'], anomaly_spikes['Close'])],
                     hoverinfo='text'
                 ), row=1, col=1)
         
-        # PANEL 2: AOVOL ANALYSIS
+        # PANEL 2: AOVOL ANALYSIS (Satuan diubah jadi Lembar)
         fig.add_trace(go.Scatter(
-            x=df_chart['Last Trading Date'], y=df_chart['Avg_Order_Volume'] / 1e6,
-            name='AOVol (Juta Rp)', mode='lines+markers',
+            x=df_chart['Date_Label'], y=df_chart['Avg_Order_Volume'] / 1e6,
+            name='AOVol (Juta Lembar)', mode='lines+markers',
             line=dict(color='purple', width=2.5), marker=dict(size=4, color='purple'),
             fill='tozeroy', fillcolor='rgba(128,0,128,0.1)'
         ), row=2, col=1)
         
+        # GARIS BIRU SOLID UNTUK RATIO
         fig.add_trace(go.Scatter(
-            x=df_chart['Last Trading Date'], y=df_chart['AOVol_Ratio'],
+            x=df_chart['Date_Label'], y=df_chart['AOVol_Ratio'],
             name='AOVol Ratio (x)', mode='lines+markers',
-            line=dict(color='orange', width=2, dash='dash'),
-            yaxis='y3', marker=dict(size=4, color='orange')
+            line=dict(color='blue', width=2), # Diubah jadi biru & tidak putus-putus
+            yaxis='y3', marker=dict(size=4, color='blue')
         ), row=2, col=1)
         
         # PANEL 3: VOLUME
         colors_vol = ['#26a69a' if row['Close'] >= row['Open Price'] else '#ef5350' for _, row in df_chart.iterrows()]
         fig.add_trace(go.Bar(
-            x=df_chart['Last Trading Date'], y=df_chart['Volume'] / 1e6,
-            name='Volume (Juta)', marker_color=colors_vol, showlegend=False
+            x=df_chart['Date_Label'], y=df_chart['Volume'] / 1e6,
+            name='Volume (Juta Lembar)', marker_color=colors_vol, showlegend=False
         ), row=3, col=1)
 
-        # TAMBAHAN V3.1: MA20_vol Overlay Line
+        # MA20_vol Overlay Line
         if 'MA20_vol' in df_chart.columns:
             fig.add_trace(go.Scatter(
-                x=df_chart['Last Trading Date'], y=df_chart['MA20_vol'] / 1e6,
-                mode='lines', name='MA20 Volume',
+                x=df_chart['Date_Label'], y=df_chart['MA20_vol'] / 1e6,
+                mode='lines', name='MA20 Vol',
                 line=dict(color='black', width=1.5),
                 hoverinfo='name+y'
             ), row=3, col=1)
@@ -481,29 +484,32 @@ with tabs[1]:
         # PANEL 4: FOREIGN FLOW
         colors_ff = ['#26a69a' if val >= 0 else '#ef5350' for val in df_chart['Net Foreign Flow']]
         fig.add_trace(go.Bar(
-            x=df_chart['Last Trading Date'], y=df_chart['Net Foreign Flow'] / 1e9,
-            name='Foreign (Miliar)', marker_color=colors_ff, showlegend=False
+            x=df_chart['Date_Label'], y=df_chart['Net Foreign Flow'] / 1e9,
+            name='Foreign (Miliar Rp)', marker_color=colors_ff, showlegend=False
         ), row=4, col=1)
         
-        # Update layout
+        # Update layout untuk menghilangkan jarak/gap (type='category')
         fig.update_layout(
             height=1000, hovermode='x unified',
             margin=dict(t=80, b=40, l=40, r=80), xaxis_rangeslider_visible=False,
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, bgcolor='rgba(255,255,255,0.8)', font=dict(size=10)),
-            title=dict(text=f"<b>Data: {len(df_chart)} periode • {df_chart['Last Trading Date'].iloc[0].strftime('%d-%b-%Y')} s/d {df_chart['Last Trading Date'].iloc[-1].strftime('%d-%b-%Y')}</b>", font=dict(size=12), y=0.99)
+            title=dict(text=f"<b>Data: {len(df_chart)} periode • {df_chart['Date_Label'].iloc[0]} s/d {df_chart['Date_Label'].iloc[-1]}</b>", font=dict(size=12), y=0.99)
         )
         
+        # Update X axes agar terbaca sebagai kategori berurutan (merapatkan candle yang ompong)
+        fig.update_xaxes(type='category', categoryorder='trace', tickangle=45, nticks=20)
+        
         fig.update_yaxes(title_text="Harga (Rp)", row=1, col=1)
-        fig.update_yaxes(title_text="AOVol (Juta Rp)", row=2, col=1, secondary_y=False)
+        fig.update_yaxes(title_text="AOVol (Jt Lbr)", row=2, col=1, secondary_y=False)
         fig.update_yaxes(title_text="Ratio (x)", row=2, col=1, secondary_y=True)
-        fig.update_yaxes(title_text="Volume (Juta)", row=3, col=1)
+        fig.update_yaxes(title_text="Vol (Jt Lbr)", row=3, col=1)
         fig.update_yaxes(title_text="Foreign (M)", row=4, col=1)
         
         st.plotly_chart(fig, use_container_width=True)
         
         st.divider()
         
-        # BROKER MUTATION ANALYSIS (KSEI - V3.1)
+        # BROKER MUTATION ANALYSIS (KSEI - V3.2)
         st.subheader("🔄 Perubahan Kepemilikan KSEI 5% (Institusi Lokal vs Asing)")
         
         if len(df_kepemilikan) > 0 and 'Kode Efek' in df_kepemilikan.columns:
@@ -514,16 +520,18 @@ with tabs[1]:
                 # Kolom Unik Rekening
                 ksei_stock['Rekening_ID'] = ksei_stock['Kode Broker'].fillna('') + ' - ' + ksei_stock['Nama Rekening Efek'].fillna('')
                 
-                # Plot timeline Stacked Area
+                # Plot timeline Stacked Area (Menggunakan dt.strftime agar rapat)
                 st.markdown("#### 📅 Timeline Kepemilikan KSEI")
                 ksei_pivot = ksei_stock.pivot_table(index='Tanggal_Data', columns='Rekening_ID', values='Jumlah Saham (Curr)', aggfunc='sum').fillna(0)
                 
                 if len(ksei_pivot.columns) > 0:
                     fig_timeline = go.Figure()
                     colors = px.colors.qualitative.Set3 + px.colors.qualitative.Pastel
+                    x_labels = ksei_pivot.index.strftime('%d-%b-%Y')
+                    
                     for i, rekening in enumerate(ksei_pivot.columns):
                         fig_timeline.add_trace(go.Scatter(
-                            x=ksei_pivot.index, y=ksei_pivot[rekening] / 1e6,
+                            x=x_labels, y=ksei_pivot[rekening] / 1e6,
                             name=rekening[:30] + '...' if len(rekening) > 30 else rekening,
                             mode='lines+markers', line=dict(width=2, color=colors[i % len(colors)]),
                             stackgroup='one'
@@ -534,9 +542,10 @@ with tabs[1]:
                         hovermode='x unified', margin=dict(t=40, b=40, l=40, r=40),
                         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, font=dict(size=10))
                     )
+                    fig_timeline.update_xaxes(type='category', categoryorder='trace', tickangle=45, nticks=15)
                     st.plotly_chart(fig_timeline, use_container_width=True)
                     
-                    # TABEL MUTASI DETAIL (TAMBAHAN STATUS LOKAL/ASING)
+                    # TABEL MUTASI DETAIL DENGAN FORMAT MINGGU (WEEK)
                     st.markdown("#### 📋 Detail Mutasi (Foreign vs Local Tracker)")
                     
                     all_mutations = []
@@ -554,8 +563,11 @@ with tabs[1]:
                                     stat_raw = prev.get('Status', 'L')
                                     stat_tag = "🌐 ASING" if str(stat_raw).strip().upper() == 'A' else "🇮🇩 LOKAL"
                                     
+                                    # 🗓️ FORMAT PERIODE: Mengubah ke ISO Week Format (contoh: 2025-W04)
+                                    periode_week = curr['Tanggal_Data'].strftime('%G-W%V')
+                                    
                                     all_mutations.append({
-                                        'Periode': f"{prev['Tanggal_Data'].strftime('%d/%m/%y')} - {curr['Tanggal_Data'].strftime('%d/%m/%y')}",
+                                        'Periode': periode_week,
                                         'Tipe Investor': stat_tag,
                                         'Rekening / Broker': rekening,
                                         'Nama Pemegang': prev['Nama Pemegang Saham'],
@@ -573,12 +585,12 @@ with tabs[1]:
                         # Tampilkan 20 teratas
                         display_mut = df_mutations.head(20).drop(columns=['Abs_Perubahan']).copy()
                         
-                        # Format angka memakai built-in Streamlit supaya bisa di-sort
                         st.dataframe(
                             display_mut, 
                             use_container_width=True, 
                             hide_index=True,
                             column_config={
+                                "Periode": st.column_config.TextColumn("Week Periode"),
                                 "Sebelum": st.column_config.NumberColumn("Sebelum (Lembar)", format="%d"),
                                 "Sesudah": st.column_config.NumberColumn("Sesudah (Lembar)", format="%d"),
                                 "Perubahan": st.column_config.NumberColumn("Mutasi (Lembar)", format="%d"),
@@ -593,9 +605,9 @@ with tabs[1]:
                         net_change = total_akumulasi - total_distribusi
                         
                         col_sum1, col_sum2, col_sum3, col_sum4 = st.columns(4)
-                        col_sum1.metric("Total Akumulasi", f"{total_akumulasi/1e6:,.1f} Jt")
-                        col_sum2.metric("Total Distribusi", f"{total_distribusi/1e6:,.1f} Jt")
-                        col_sum3.metric("Net Change", f"{net_change/1e6:+,.1f} Jt")
+                        col_sum1.metric("Total Akumulasi", f"{total_akumulasi/1e6:,.1f} Jt Lbr")
+                        col_sum2.metric("Total Distribusi", f"{total_distribusi/1e6:,.1f} Jt Lbr")
+                        col_sum3.metric("Net Change", f"{net_change/1e6:+,.1f} Jt Lbr")
                         col_sum4.metric("Rekening Aktif", df_mutations['Rekening / Broker'].nunique())
                     else:
                         st.info("Tidak ada perubahan kepemilikan dalam periode ini")
