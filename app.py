@@ -177,7 +177,6 @@ def prepare_chart_data(stock_code, interval, chart_len, max_date, period_map, _d
     """
     ✅ OPTIMIZED: Prepare chart data dengan resampling. 
     Menggunakan parameter stock_code (string) agar hashing cache Streamlit instan.
-    Dataframe _df_master menggunakan prefix '_' agar tidak di-hash oleh Streamlit.
     """
     # Filter hanya di dalam fungsi yang di-cache
     df_chart = _df_master[_df_master['Stock Code'] == stock_code].copy()
@@ -193,10 +192,26 @@ def prepare_chart_data(stock_code, interval, chart_len, max_date, period_map, _d
         
     df_chart = df_chart.sort_values('Last Trading Date')
     
-    # Handle Open Price yang kosong
-    df_chart['Open Price'] = df_chart['Open Price'].fillna(df_chart['Previous'])
+    # ====================================================
+    # 🛠️ PERBAIKAN LOGIKA CANDLESTICK (OHLC)
+    # ====================================================
+    # 1. Ubah nilai 0 menjadi NaN sementara agar mudah ditambal
+    for col in ['Close', 'Open Price', 'High', 'Low', 'Previous']:
+        if col in df_chart.columns:
+            df_chart[col] = df_chart[col].replace(0, np.nan)
+
+    # 2. Jika Close blank/NaN, ambil dari Previous
+    if 'Previous' in df_chart.columns:
+        df_chart['Close'] = df_chart['Close'].fillna(df_chart['Previous'])
+    
+    # 3. Jika Close masih kosong juga, isi dengan harga hari sebelumnya (Forward Fill)
+    df_chart['Close'] = df_chart['Close'].ffill().bfill()
+    
+    # 4. Jika Open, High, Low kosong, samakan dengan Close (agar candle jadi garis lurus, tidak anjlok ke 0)
     df_chart['Open Price'] = df_chart['Open Price'].fillna(df_chart['Close'])
-    df_chart['Open Price'] = df_chart['Open Price'].ffill().bfill()
+    df_chart['High'] = df_chart['High'].fillna(df_chart['Close'])
+    df_chart['Low'] = df_chart['Low'].fillna(df_chart['Close'])
+    # ====================================================
     
     # Kamus agregasi resampling
     agg_dict = {
