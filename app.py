@@ -295,32 +295,46 @@ def compute_ksei_mutations_optimized(ksei_stock):
     return result
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def get_cached_ksei_timeline(stock_code, _df_ksei):
-    """✅ OPTIMIZED: Pivot KSEI Mingguan (Sesuai Referensi)"""
+def get_cached_ksei_timeline(stock_code, interval, chart_len, max_date, period_map, _df_ksei):
+    """✅ OPTIMIZED: Pivot KSEI Dinamis (Mengikuti Filter Periode & Interval)"""
     ksei_stock = _df_ksei[_df_ksei['Kode Efek'] == stock_code].copy()
     ksei_stock = ksei_stock.sort_values('Tanggal_Data')
     
     if len(ksei_stock) <= 1:
         return None
         
+    # 1. Filter Berdasarkan Periode (Sinkron dengan Chart Atas)
+    if chart_len != "Semua Data":
+        days_back = period_map[chart_len]
+        start_date_chart = max_date - timedelta(days=days_back)
+        ksei_stock = ksei_stock[ksei_stock['Tanggal_Data'].dt.date >= start_date_chart]
+        
+    if ksei_stock.empty:
+        return None
+
     ksei_stock_temp = ksei_stock.copy()
     ksei_stock_temp['Rekening_ID'] = ksei_stock_temp['Kode Broker'].fillna('') + ' - ' + ksei_stock_temp['Nama Rekening Efek'].fillna('')
     
-    # Gunakan rata-rata (mean) sesuai gambar "Average of Jumlah Saham"
+    # Pivot Table
     ksei_pivot = ksei_stock_temp.pivot_table(
         index='Tanggal_Data', columns='Rekening_ID', 
         values='Jumlah Saham (Curr)', aggfunc='mean'
     )
     
-    # Forward fill agar garis tidak putus jika di hari tertentu tidak ada transaksi
-    ksei_pivot = ksei_pivot.ffill().fillna(0)
-    
-    # Resample ke mingguan (Week)
-    ksei_pivot = ksei_pivot.resample('W').mean()
-    
-    # Ubah format index menjadi Tahun-Minggu (Contoh: 2025 01)
-    ksei_pivot.index = ksei_pivot.index.strftime('%Y %V')
-    
+    # 2. Resampling Dinamis Berdasarkan Interval (Daily/Weekly/Monthly)
+    if interval == "Daily":
+        ksei_pivot = ksei_pivot.resample('D').mean()
+        ksei_pivot = ksei_pivot.ffill().fillna(0)
+        ksei_pivot.index = ksei_pivot.index.strftime('%d-%b-%Y')
+    elif interval == "Weekly":
+        ksei_pivot = ksei_pivot.resample('W-FRI').mean() # Akhir pekan
+        ksei_pivot = ksei_pivot.ffill().fillna(0)
+        ksei_pivot.index = ksei_pivot.index.strftime('%Y-W%V')
+    elif interval == "Monthly":
+        ksei_pivot = ksei_pivot.resample('M').mean() # Akhir bulan
+        ksei_pivot = ksei_pivot.ffill().fillna(0)
+        ksei_pivot.index = ksei_pivot.index.strftime('%b %Y')
+        
     return ksei_pivot
 
 @st.cache_data(ttl=1800, show_spinner=False)
