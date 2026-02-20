@@ -296,7 +296,7 @@ def compute_ksei_mutations_optimized(ksei_stock):
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_cached_ksei_timeline(stock_code, _df_ksei):
-    """✅ OPTIMIZED: Hitung dan buat Pivot KSEI di dalam Cache"""
+    """✅ OPTIMIZED: Pivot KSEI Mingguan (Sesuai Referensi)"""
     ksei_stock = _df_ksei[_df_ksei['Kode Efek'] == stock_code].copy()
     ksei_stock = ksei_stock.sort_values('Tanggal_Data')
     
@@ -306,10 +306,20 @@ def get_cached_ksei_timeline(stock_code, _df_ksei):
     ksei_stock_temp = ksei_stock.copy()
     ksei_stock_temp['Rekening_ID'] = ksei_stock_temp['Kode Broker'].fillna('') + ' - ' + ksei_stock_temp['Nama Rekening Efek'].fillna('')
     
+    # Gunakan rata-rata (mean) sesuai gambar "Average of Jumlah Saham"
     ksei_pivot = ksei_stock_temp.pivot_table(
         index='Tanggal_Data', columns='Rekening_ID', 
-        values='Jumlah Saham (Curr)', aggfunc='sum'
-    ).fillna(0)
+        values='Jumlah Saham (Curr)', aggfunc='mean'
+    )
+    
+    # Forward fill agar garis tidak putus jika di hari tertentu tidak ada transaksi
+    ksei_pivot = ksei_pivot.ffill().fillna(0)
+    
+    # Resample ke mingguan (Week)
+    ksei_pivot = ksei_pivot.resample('W').mean()
+    
+    # Ubah format index menjadi Tahun-Minggu (Contoh: 2025 01)
+    ksei_pivot.index = ksei_pivot.index.strftime('%Y %V')
     
     return ksei_pivot
 
@@ -657,10 +667,11 @@ with tabs[1]:
             name='Foreign (Miliar Rp)', marker_color=colors_ff, showlegend=False
         ), row=4, col=1)
         
-        # Update layout
+        # Update layout - PERBAIKAN MARGIN AGAR MENTOK KIRI KANAN
         fig.update_layout(
             height=1000, hovermode='x unified',
-            margin=dict(t=80, b=40, l=40, r=80), xaxis_rangeslider_visible=False,
+            margin=dict(t=50, b=20, l=10, r=10), # <--- Ubah l=10 dan r=10 agar lebar maksimal
+            xaxis_rangeslider_visible=False,
             legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, bgcolor='rgba(255,255,255,0.8)', font=dict(size=10)),
             title=dict(text=f"<b>Data: {len(df_chart)} periode • {df_chart['Date_Label'].iloc[0]} s/d {df_chart['Date_Label'].iloc[-1]}</b>", font=dict(size=12), y=0.99)
         )
@@ -690,25 +701,35 @@ with tabs[1]:
                 ksei_pivot = get_cached_ksei_timeline(selected_stock, df_kepemilikan)
                 
                 if ksei_pivot is not None and len(ksei_pivot.columns) > 0:
-                    st.markdown("#### 📅 Timeline Kepemilikan KSEI")
+                    st.markdown("#### 📅 Timeline Kepemilikan KSEI (Weekly)")
                     fig_timeline = go.Figure()
-                    colors = px.colors.qualitative.Set3 + px.colors.qualitative.Pastel
-                    x_labels = ksei_pivot.index.strftime('%d-%b-%Y')
+                    colors = px.colors.qualitative.Set2 + px.colors.qualitative.Pastel
+                    x_labels = ksei_pivot.index
                     
                     for i, rekening in enumerate(ksei_pivot.columns):
                         fig_timeline.add_trace(go.Scatter(
-                            x=x_labels, y=ksei_pivot[rekening] / 1e6,
+                            x=x_labels, 
+                            y=ksei_pivot[rekening], # Menampilkan nilai asli (bukan dibagi 1 juta)
                             name=rekening[:30] + '...' if len(rekening) > 30 else rekening,
-                            mode='lines+markers', line=dict(width=2, color=colors[i % len(colors)]),
-                            stackgroup='one'
+                            mode='lines', # Dibuat garis solid (bukan area)
+                            line=dict(width=2.5, color=colors[i % len(colors)])
+                            # stackgroup='one' DIHAPUS agar menjadi Line Chart terpisah
                         ))
                     
                     fig_timeline.update_layout(
-                        height=450, xaxis_title="Tanggal", yaxis_title="Jumlah Saham (Juta Lembar)",
-                        hovermode='x unified', margin=dict(t=40, b=40, l=40, r=40),
-                        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, font=dict(size=10))
+                        template='plotly_dark', # Tema Gelap
+                        plot_bgcolor='#2b2b2b', # Warna background mirip referensi
+                        paper_bgcolor='#2b2b2b',
+                        height=550, 
+                        xaxis_title="Week", 
+                        yaxis_title="Average of Jumlah Saham (Curr)",
+                        hovermode='x unified', 
+                        margin=dict(t=40, b=40, l=20, r=20),
+                        # Legend dipindah ke sebelah kanan seperti di gambar
+                        legend=dict(orientation='v', yanchor='top', y=1, xanchor='left', x=1.02, font=dict(size=10))
                     )
-                    fig_timeline.update_xaxes(type='category', categoryorder='trace', tickangle=45, nticks=15)
+                    
+                    fig_timeline.update_xaxes(type='category', tickangle=90) # Tulisan Week tegak lurus
                     st.plotly_chart(fig_timeline, use_container_width=True, config={'displayModeBar': False})
                     
                     # TABEL MUTASI DETAIL
