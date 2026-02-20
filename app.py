@@ -460,7 +460,7 @@ with tabs[0]:
                     Whale_Spikes=('Is_Whale_Spike', 'sum'),
                     Retail_Drops=('Is_Retail_Drop', 'sum'),
                     Max_Anomaly=('Big_Player_Anomaly', 'max'),
-                    Max_AOV_Ratio=('AOVol_Ratio', 'max'), # <--- DITAMBAHKAN: Max AOV Ratio selama periode
+                    Max_AOV_Ratio=('AOVol_Ratio', 'max'), 
                     Trading_Days=('Last Trading Date', 'nunique')
                 ).reset_index()
                 
@@ -501,7 +501,7 @@ with tabs[0]:
                         (summary['Turnover_Float_Pct'] * 1.5) + 
                         (np.where(summary['Net_Foreign'] > 0, 10, 0)) + 
                         (summary['Max_Anomaly'] * 2) +
-                        (summary['Max_AOV_Ratio'] * 2) # <--- AOV Ratio juga menyumbang skor!
+                        (summary['Max_AOV_Ratio'] * 2) 
                     )
                 else:
                     summary['Conviction_Score'] = (
@@ -562,7 +562,7 @@ with tabs[0]:
                     # Terapkan ke kolom Change % dan Net Foreign Flow
                     styled_df = styled_df.map(color_pos_neg, subset=['Change Terakhir', 'Net Foreign (M)'])
                     
-                    # --- TAMPILAN TABEL DENGAN COLUMN CONFIG & STYLER ---
+                    # --- TAMPILAN TABEL TUNGGAL (YANG SUDAH BERWARNA) ---
                     st.dataframe(
                         styled_df, 
                         use_container_width=True, 
@@ -575,25 +575,6 @@ with tabs[0]:
                             "% Serap Float": st.column_config.NumberColumn("% Serap Float", format="%.2f %%"),
                             col_target_name: st.column_config.NumberColumn(col_target_name, format="%d Kali"),
                             "Max AOV Ratio": st.column_config.NumberColumn("Max AOV Ratio", format="%.2f x"),
-                            "Net Foreign (M)": st.column_config.NumberColumn("Net Foreign (M)", format="Rp %.1f M"),
-                            "Max Anomali": st.column_config.NumberColumn("Max Anomali", format="%.1f x"),
-                            "Conviction Score": st.column_config.NumberColumn("Conviction Score", format=f"{score_emoji} %.1f")
-                        }
-                    )
-                    
-                    # --- TAMPILAN TABEL DENGAN COLUMN CONFIG (BISA DI-SORT) ---
-                    st.dataframe(
-                        display_df, 
-                        use_container_width=True, 
-                        hide_index=True,
-                        height=500,
-                        column_config={
-                            "Harga": st.column_config.NumberColumn("Harga", format="Rp %d"),
-                            "Change Terakhir": st.column_config.NumberColumn("Change", format="%+.2f %%"),
-                            "Avg Value/Hari (M)": st.column_config.NumberColumn("Avg Value/Hari (M)", format="Rp %.1f M"),
-                            "% Serap Float": st.column_config.NumberColumn("% Serap Float", format="%.2f %%"),
-                            col_target_name: st.column_config.NumberColumn(col_target_name, format="%d Kali"),
-                            "Max AOV Ratio": st.column_config.NumberColumn("Max AOV Ratio", format="%.2f x"), # <--- KOLOM BARU MUNCUL DI SINI
                             "Net Foreign (M)": st.column_config.NumberColumn("Net Foreign (M)", format="Rp %.1f M"),
                             "Max Anomali": st.column_config.NumberColumn("Max Anomali", format="%.1f x"),
                             "Conviction Score": st.column_config.NumberColumn("Conviction Score", format=f"{score_emoji} %.1f")
