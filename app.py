@@ -375,32 +375,37 @@ tabs = st.tabs([
     "🗺️ MARKET MAP"
 ])
 
-# ==================== TAB 1: SCREENER PRO ====================
+# ==================== TAB 1: SCREENER PRO (ROCKET EDITION) ====================
 with tabs[0]:
-    st.markdown("### 🎯 Screener Pro - Institutional Activity")
+    st.markdown("### 🎯 Screener Pro - Saham Siap Terbang 🚀")
+    st.markdown("Mencari saham dengan jejak akumulasi bandar (AOVol Spikes), serapan float tinggi, dan likuiditas aman.")
     
     with st.container():
         st.markdown('<div class="filter-container">', unsafe_allow_html=True)
         
         r1c1, r1c2, r1c3, r1c4 = st.columns(4)
         with r1c1:
-            min_value = st.number_input("Min Nilai (M)", 0, 10000, 10) * 1e9
+            # ANTI GORENGAN KOLESTEROL: Pakai Rata-rata per Hari, bukan Total
+            min_avg_val = st.number_input("Min Rata-rata Nilai/Hari (M)", 0, 5000, 5) * 1e9
         with r1c2:
-            min_volume = st.number_input("Min Volume (Juta)", 0, 10000, 100) * 1e6
+            min_price = st.number_input("Min Harga (Rp)", 0, 50000, 50)
         with r1c3:
-            min_anomali = st.slider("Min Anomali (x)", 0, 20, 3)
+            # Selaras dengan Tab 2: Hitung berapa kali spike terjadi
+            min_spikes = st.number_input("Min AOVol Spikes (>1.5x)", 0, 50, 2)
         with r1c4:
-            min_aoVol = st.slider("Min AOVol Ratio", 0.0, 5.0, 1.5, 0.1)
+            foreign_filter = st.selectbox("Foreign Flow (Periode)", ["Semua", "Net Buy", "Net Sell", "Net Buy > 5M"])
         
         r2c1, r2c2, r2c3, r2c4 = st.columns(4)
         with r2c1:
-            foreign_filter = st.selectbox("Foreign Flow", ["Semua", "Net Buy", "Net Sell", "Net Buy > 10M", "Net Sell > 10M"])
+            date_range = st.date_input("Periode Screener", value=(default_start, max_date))
         with r2c2:
-            min_vol_pct = st.slider("Min Volume % Tradeble", 0.0, 10.0, 0.5, 0.1)
+            # Selaras dengan Float Analysis
+            min_turnover = st.slider("Min Serapan Float (%)", 0.0, 50.0, 1.0, 0.5)
         with r2c3:
-            min_price = st.number_input("Min Harga", 0, 100000, 50)
+            # Filter berdasarkan Posisi Harga vs Bandar Average
+            trend_filter = st.selectbox("Trend (vs VWMA 20D)", ["Semua", "Harga > VWMA (Uptrend/Breakout)", "Harga < VWMA (Downtrend/Bottoming)"])
         with r2c4:
-            date_range = st.date_input("Periode", value=(default_start, max_date))
+            min_anomali = st.slider("Min BP Anomaly (x)", 0, 20, 0)
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -411,70 +416,82 @@ with tabs[0]:
         df_filter = df_transaksi[mask].copy()
         
         if not df_filter.empty:
-            summary = df_filter.groupby('Stock Code').agg({
-                'Close': 'last',
-                'Change %': 'mean',
-                'Volume': 'sum',
-                'Value': 'sum',
-                'Net Foreign Flow': 'sum',
-                'Big_Player_Anomaly': 'max',
-                'Volume Spike (x)': 'max',
-                'Volume_Pct_Tradeble': 'mean',
-                'Avg_Order_Volume': 'mean',
-                'AOVol_Ratio': 'max',
-                'Tradeble Shares': 'last'
-            }).reset_index()
-            
-            summary['Pressure'] = np.where(summary['Value'] > 0, 
-                                          (summary['Net Foreign Flow'] / summary['Value'] * 100), 0)
-            summary['Inst_Score'] = (
-                summary['Volume_Pct_Tradeble'] * 0.3 + 
-                summary['Big_Player_Anomaly'] * 0.3 + 
-                abs(summary['Pressure']) * 0.2 +
-                summary['AOVol_Ratio'] * 0.2
-            )
-            
-            # Apply filters
-            summary = summary[summary['Value'] >= min_value]
-            summary = summary[summary['Volume'] >= min_volume]
-            summary = summary[summary['Big_Player_Anomaly'] >= min_anomali]
-            summary = summary[summary['AOVol_Ratio'] >= min_aoVol]
-            summary = summary[summary['Volume_Pct_Tradeble'] >= min_vol_pct]
-            summary = summary[summary['Close'] >= min_price]
-            
-            if foreign_filter == "Net Buy":
-                summary = summary[summary['Net Foreign Flow'] > 0]
-            elif foreign_filter == "Net Sell":
-                summary = summary[summary['Net Foreign Flow'] < 0]
-            elif foreign_filter == "Net Buy > 10M":
-                summary = summary[summary['Net Foreign Flow'] > 10e9]
-            elif foreign_filter == "Net Sell > 10M":
-                summary = summary[summary['Net Foreign Flow'] < -10e9]
-            
-            summary = summary.sort_values('Inst_Score', ascending=False).head(100)
-            
-            st.markdown(f"**🎯 Ditemukan {len(summary)} saham**")
-            
-            if len(summary) > 0:
-                display_df = summary[['Stock Code', 'Close', 'Change %', 'Value', 'Net Foreign Flow',
-                                     'Volume_Pct_Tradeble', 'Big_Player_Anomaly', 'AOVol_Ratio', 'Inst_Score']].copy()
+            with st.spinner("🔍 Memindai jejak bandar di market..."):
+                # Hitung spike harian
+                df_filter['Is_Spike'] = (df_filter['AOVol_Ratio'] > 1.5).astype(int)
                 
-                # Format numbers
-                display_df['Close'] = display_df['Close'].apply(lambda x: f"Rp {x:,.0f}")
-                display_df['Value'] = display_df['Value'].apply(lambda x: f"Rp {x:,.0f}")
-                display_df['Net Foreign Flow'] = display_df['Net Foreign Flow'].apply(lambda x: f"Rp {x:,.0f}")
-                display_df['Change %'] = display_df['Change %'].apply(lambda x: f"{x:.2f}%")
-                display_df['Volume_Pct_Tradeble'] = display_df['Volume_Pct_Tradeble'].apply(lambda x: f"{x:.2f}%")
-                display_df['Big_Player_Anomaly'] = display_df['Big_Player_Anomaly'].apply(lambda x: f"{x:.1f}x")
-                display_df['AOVol_Ratio'] = display_df['AOVol_Ratio'].apply(lambda x: f"{x:.1f}x")
-                display_df['Inst_Score'] = display_df['Inst_Score'].apply(lambda x: f"{x:.1f}")
+                # Agregasi Data
+                summary = df_filter.groupby('Stock Code').agg(
+                    Close=('Close', 'last'),
+                    VWMA_20D=('VWMA_20D', 'last') if 'VWMA_20D' in df_filter.columns else ('Close', 'last'),
+                    Total_Value=('Value', 'sum'),
+                    Total_Volume=('Volume', 'sum'),
+                    Net_Foreign=('Net Foreign Flow', 'sum'),
+                    AOVol_Spikes=('Is_Spike', 'sum'),
+                    Max_Anomaly=('Big_Player_Anomaly', 'max'),
+                    Trading_Days=('Last Trading Date', 'nunique')
+                ).reset_index()
                 
-                display_df.columns = ['Kode', 'Harga', 'Change', 'Nilai', 'Foreign', 
-                                     'Vol%Trade', 'Anomali', 'AOVol', 'Score']
+                # Metrik Lanjutan (Anti Gorengan & Float Absorption)
+                summary['Avg_Daily_Value'] = summary['Total_Value'] / summary['Trading_Days'].replace(0, 1)
+                summary['Public_Shares'] = summary['Stock Code'].map(DICT_PUBLIC_SHARES).fillna(0)
+                summary['Turnover_Float_Pct'] = np.where(
+                    summary['Public_Shares'] > 0, 
+                    (summary['Total_Volume'] / summary['Public_Shares']) * 100, 
+                    0
+                )
                 
-                st.dataframe(display_df, use_container_width=True, height=500)
-            else:
-                st.info("Tidak ada saham yang memenuhi kriteria")
+                # --- APPLY FILTERS ---
+                summary = summary[summary['Avg_Daily_Value'] >= min_avg_val]
+                summary = summary[summary['Close'] >= min_price]
+                summary = summary[summary['AOVol_Spikes'] >= min_spikes]
+                summary = summary[summary['Turnover_Float_Pct'] >= min_turnover]
+                summary = summary[summary['Max_Anomaly'] >= min_anomali]
+                
+                if foreign_filter == "Net Buy":
+                    summary = summary[summary['Net_Foreign'] > 0]
+                elif foreign_filter == "Net Sell":
+                    summary = summary[summary['Net_Foreign'] < 0]
+                elif foreign_filter == "Net Buy > 5M":
+                    summary = summary[summary['Net_Foreign'] > 5e9]
+                
+                if trend_filter == "Harga > VWMA (Uptrend/Breakout)":
+                    summary = summary[summary['Close'] >= summary['VWMA_20D']]
+                elif trend_filter == "Harga < VWMA (Downtrend/Bottoming)":
+                    summary = summary[summary['Close'] < summary['VWMA_20D']]
+                
+                # --- 🚀 ROCKET SCORE (Scoring System Baru) ---
+                # Menilai probabilitas saham terbang berdasarkan serapan barang dan agresivitas
+                summary['Rocket_Score'] = (
+                    (summary['AOVol_Spikes'] * 5) +  # 5 poin tiap kali bandar ngegas
+                    (summary['Turnover_Float_Pct'] * 1.5) +  # Makin banyak barang publik disedot, makin bagus
+                    (np.where(summary['Net_Foreign'] > 0, 10, 0)) + # Bonus 10 poin kalau Asing ikut akum
+                    (np.where(summary['Close'] > summary['VWMA_20D'], 10, 0)) + # Bonus 10 poin kalau trend terjaga
+                    (summary['Max_Anomaly'] * 2) # Poin tambahan dari Big Player Anomaly
+                )
+                
+                summary = summary.sort_values('Rocket_Score', ascending=False).head(100)
+                
+                st.markdown(f"**🎯 Ditemukan {len(summary)} saham potensial**")
+                
+                if len(summary) > 0:
+                    display_df = summary[['Stock Code', 'Close', 'Avg_Daily_Value', 'Turnover_Float_Pct', 
+                                         'AOVol_Spikes', 'Net_Foreign', 'Max_Anomaly', 'Rocket_Score']].copy()
+                    
+                    # Format numbers
+                    display_df['Close'] = display_df['Close'].apply(lambda x: f"Rp {x:,.0f}")
+                    display_df['Avg_Daily_Value'] = display_df['Avg_Daily_Value'].apply(lambda x: f"Rp {x/1e9:,.1f} M")
+                    display_df['Turnover_Float_Pct'] = display_df['Turnover_Float_Pct'].apply(lambda x: f"{x:.2f}%")
+                    display_df['Net_Foreign'] = display_df['Net_Foreign'].apply(lambda x: f"Rp {x/1e9:,.1f} M")
+                    display_df['Rocket_Score'] = display_df['Rocket_Score'].apply(lambda x: f"🚀 {x:.1f}")
+                    display_df['Max_Anomaly'] = display_df['Max_Anomaly'].apply(lambda x: f"{x:.1f}x")
+                    
+                    display_df.columns = ['Kode', 'Harga', 'Avg Value/Hari', '% Serap Float', 
+                                         'Total Spikes', 'Net Foreign', 'Max Anomali', 'Rocket Score']
+                    
+                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Tidak ada saham yang memenuhi kriteria ketat ini. Coba longgarkan filter (misal: turunkan Min Spikes atau Serapan Float).")
 
 
 # ==================== TAB 2: DEEP DIVE & CHART (V3.3 SUPER FAST!) ====================
