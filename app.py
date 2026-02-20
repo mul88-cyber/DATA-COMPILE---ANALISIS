@@ -402,7 +402,7 @@ with tabs[0]:
     with st.container():
         st.markdown('<div class="filter-container">', unsafe_allow_html=True)
         
-        # BARIS 1: Mode Deteksi & Fase Harga (Adopsi dari Script Lama)
+        # BARIS 1: Mode Deteksi & Fase Harga
         col_m1, col_m2, col_m3 = st.columns(3)
         with col_m1:
             target_deteksi = st.radio("Target Deteksi:", ("🐋 Whale Accumulation (High AOV)", "🩸 Retail Panic / Mark-down (Low AOV)"))
@@ -452,7 +452,7 @@ with tabs[0]:
                 # Agregasi Data
                 summary = df_filter.groupby('Stock Code').agg(
                     Close=('Close', 'last'),
-                    Last_Change=('Change %', 'last'), # Ambil % Change terakhir untuk konteks harga
+                    Last_Change=('Change %', 'last'), 
                     VWMA_20D=('VWMA_20D', 'last') if 'VWMA_20D' in df_filter.columns else ('Close', 'last'),
                     Total_Value=('Value', 'sum'),
                     Total_Volume=('Volume', 'sum'),
@@ -460,6 +460,7 @@ with tabs[0]:
                     Whale_Spikes=('Is_Whale_Spike', 'sum'),
                     Retail_Drops=('Is_Retail_Drop', 'sum'),
                     Max_Anomaly=('Big_Player_Anomaly', 'max'),
+                    Max_AOV_Ratio=('AOVol_Ratio', 'max'), # <--- DITAMBAHKAN: Max AOV Ratio selama periode
                     Trading_Days=('Last Trading Date', 'nunique')
                 ).reset_index()
                 
@@ -485,7 +486,7 @@ with tabs[0]:
                     summary = summary[summary['Retail_Drops'] >= min_spikes]
                     target_col = 'Retail_Drops'
 
-                # --- APPLY PRICE CONTEXT FILTER (Adopsi Script Lama) ---
+                # --- APPLY PRICE CONTEXT FILTER ---
                 if price_condition == "💎 HIDDEN GEM (Sideways/Datar: -2% s/d +2%)":
                     summary = summary[(summary['Last_Change'] >= -2.0) & (summary['Last_Change'] <= 2.0)]
                 elif price_condition == "⚓ BOTTOM FISHING (Lagi Turun: < VWMA atau Minus)":
@@ -495,15 +496,14 @@ with tabs[0]:
                 
                 # --- 🚀 ROCKET / CONVICTION SCORE ---
                 if "Whale" in target_deteksi:
-                    # Score untuk cari saham terbang (Akumulasi kuat)
                     summary['Conviction_Score'] = (
                         (summary['Whale_Spikes'] * 5) + 
                         (summary['Turnover_Float_Pct'] * 1.5) + 
                         (np.where(summary['Net_Foreign'] > 0, 10, 0)) + 
-                        (summary['Max_Anomaly'] * 2)
+                        (summary['Max_Anomaly'] * 2) +
+                        (summary['Max_AOV_Ratio'] * 2) # <--- AOV Ratio juga menyumbang skor!
                     )
                 else:
-                    # Score untuk cari saham bahaya didistribusi (Ritel masuk)
                     summary['Conviction_Score'] = (
                         (summary['Retail_Drops'] * 5) + 
                         (summary['Turnover_Float_Pct'] * 1.0) + 
@@ -516,7 +516,7 @@ with tabs[0]:
                 
                 if len(summary) > 0:
                     display_df = summary[['Stock Code', 'Close', 'Last_Change', 'Avg_Daily_Value', 'Turnover_Float_Pct', 
-                                         target_col, 'Net_Foreign', 'Max_Anomaly', 'Conviction_Score']].copy()
+                                         target_col, 'Max_AOV_Ratio', 'Net_Foreign', 'Max_Anomaly', 'Conviction_Score']].copy()
                     
                     # --- Formatting Skala Angka Murni ---
                     display_df['Avg_Daily_Value'] = display_df['Avg_Daily_Value'] / 1e9
@@ -527,7 +527,7 @@ with tabs[0]:
                     score_emoji = "🚀" if "Whale" in target_deteksi else "🩸"
                     
                     display_df.columns = ['Kode', 'Harga', 'Change Terakhir', 'Avg Value/Hari (M)', '% Serap Float', 
-                                         col_target_name, 'Net Foreign (M)', 'Max Anomali', 'Conviction Score']
+                                         col_target_name, 'Max AOV Ratio', 'Net Foreign (M)', 'Max Anomali', 'Conviction Score']
                     
                     # --- TAMPILAN TABEL DENGAN COLUMN CONFIG (BISA DI-SORT) ---
                     st.dataframe(
@@ -541,6 +541,7 @@ with tabs[0]:
                             "Avg Value/Hari (M)": st.column_config.NumberColumn("Avg Value/Hari (M)", format="Rp %.1f M"),
                             "% Serap Float": st.column_config.NumberColumn("% Serap Float", format="%.2f %%"),
                             col_target_name: st.column_config.NumberColumn(col_target_name, format="%d Kali"),
+                            "Max AOV Ratio": st.column_config.NumberColumn("Max AOV Ratio", format="%.2f x"), # <--- KOLOM BARU MUNCUL DI SINI
                             "Net Foreign (M)": st.column_config.NumberColumn("Net Foreign (M)", format="Rp %.1f M"),
                             "Max Anomali": st.column_config.NumberColumn("Max Anomali", format="%.1f x"),
                             "Conviction Score": st.column_config.NumberColumn("Conviction Score", format=f"{score_emoji} %.1f")
