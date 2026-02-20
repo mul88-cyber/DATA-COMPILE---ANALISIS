@@ -249,7 +249,7 @@ def compute_ksei_mutations_optimized(ksei_stock):
     
     # Kolom Unik Rekening
     ksei_stock = ksei_stock.copy()
-    ksei_stock['Rekening_ID'] = ksei_stock['Kode Broker'].fillna('') + ' - ' + ksei_stock['Nama Rekening Efek'].fillna('')
+    ksei_stock['Rekening_ID'] = ksei_stock['Kode Broker'].fillna('') + ' - ' + ksei_stock['Nama Pemegang Saham'].fillna('')
     
     # Sort untuk shift operation
     ksei_sorted = ksei_stock.sort_values(['Rekening_ID', 'Tanggal_Data']).copy()
@@ -313,7 +313,7 @@ def get_cached_ksei_timeline(stock_code, interval, chart_len, max_date, period_m
         return None
 
     ksei_stock_temp = ksei_stock.copy()
-    ksei_stock_temp['Rekening_ID'] = ksei_stock_temp['Kode Broker'].fillna('') + ' - ' + ksei_stock_temp['Nama Rekening Efek'].fillna('')
+    ksei_stock_temp['Rekening_ID'] = ksei_stock_temp['Kode Broker'].fillna('') + ' - ' + ksei_stock_temp['Nama Pemegang Saham'].fillna('')
     
     # Pivot Table
     ksei_pivot = ksei_stock_temp.pivot_table(
