@@ -541,7 +541,7 @@ with tabs[1]:
         with k1: st.metric("Harga Terkini", f"Rp {latest['Close']:,.0f}", f"{latest['Change %']:.2f}%")
         with k2: st.metric("Volume Terkini", f"{latest['Volume']/1e6:,.1f} Jt Lbr") 
         with k3: st.metric("VWMA 20D Anchor", f"Rp {latest['VWMA_20D']:,.0f}" if 'VWMA_20D' in latest else "N/A")
-        with k4: st.metric("AOVol Spikes (>1.5x)", f"{aovol_spike_count} Kali") # <--- UPDATE DISINI
+        with k4: st.metric("AOVol Spikes (>2x)", f"{aovol_spike_count} Kali") # <--- UPDATE DISINI
         with k5: 
             st.markdown(f"""
             <div class='kpi-card'>
