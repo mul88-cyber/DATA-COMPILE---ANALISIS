@@ -6,6 +6,6 @@ google-auth-httplib2
 google-auth-oauthlib
 plotly
 matplotlib
-streamlit-lightweight-charts
+streamlit-lightweight
 streamlit-echarts
 ta
