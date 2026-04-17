@@ -2,7 +2,7 @@
 # BANDARMOLOGY MASTER V4
 # Lightweight Charts + ECharts Edition
 # ==========================================
-
+from pyecharts.commons.utils import JsCode
 import streamlit as st
 import pandas as pd
 import numpy as np
