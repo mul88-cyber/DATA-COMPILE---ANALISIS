@@ -15,7 +15,6 @@ from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 import warnings
 import json
-from streamlit_lightweight_charts import render_streamlit_lightweight_charts
 from streamlit_echarts import st_echarts
 
 warnings.filterwarnings('ignore')
