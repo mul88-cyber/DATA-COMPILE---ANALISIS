@@ -419,17 +419,22 @@ def render_lw_chart(candles, volumes, foreigns):
 # ==========================================
 
 def create_echarts_bubble(ff_data):
-    """Bubble chart interaktif dengan ECharts"""
+    """Bubble chart interaktif dengan ECharts (FIXED)"""
     
     data_points = []
     for _, row in ff_data.iterrows():
+        # Hitung symbol size langsung di Python agar tidak error di JS
+        val_abs = float(abs(row['Net Foreign Flow']) / 1e9)
+        symbol_size = np.sqrt(val_abs) * 15 + 10 
+        
         data_points.append({
             "name": row['Stock Code'],
             "value": [
                 float(row['Value'] / 1e9),
                 float(row['Net Foreign Flow'] / 1e9),
-                float(abs(row['Net Foreign Flow']) / 1e9)
+                val_abs
             ],
+            "symbolSize": symbol_size, # Menggunakan angka langsung
             "itemStyle": {
                 "color": "#26a69a" if row['Net Foreign Flow'] >= 0 else "#ef5350"
             }
@@ -443,13 +448,14 @@ def create_echarts_bubble(ff_data):
         },
         "tooltip": {
             "trigger": "item",
-            "formatter": """
+            # Gunakan JsCode agar fungsi JS tereksekusi dengan benar
+            "formatter": JsCode("""
                 function(params) {
                     return `<b>${params.name}</b><br/>
                             Nilai Transaksi: Rp ${params.value[0].toFixed(1)} M<br/>
                             Net Foreign: Rp ${params.value[1].toFixed(1)} M`;
                 }
-            """
+            """)
         },
         "xAxis": {
             "name": "Total Nilai Transaksi (Miliar Rp)",
@@ -469,7 +475,6 @@ def create_echarts_bubble(ff_data):
         "series": [{
             "type": "scatter",
             "data": data_points,
-            "symbolSize": "function(val) { return Math.sqrt(val[2]) * 15 + 10; }",
             "label": {
                 "show": True,
                 "position": "top",
