@@ -106,12 +106,16 @@ st.markdown("""
 @st.cache_data(ttl=3600, show_spinner="📊 Mengunduh & Memproses Data Market...")
 def load_and_preprocess_data():
     try:
-        gcp_service_account = st.secrets["gcp_service_account"]
+        import json
+        
+        # Parse JSON string dari secrets menjadi dictionary
+        gcp_service_account = json.loads(st.secrets["gcp_service_account"])
+        
         credentials = service_account.Credentials.from_service_account_info(
             gcp_service_account, scopes=['https://www.googleapis.com/auth/drive.readonly']
         )
         service = build('drive', 'v3', credentials=credentials)
-        
+                
         # Load Transaksi
         req_trans = service.files().get_media(fileId="1GvDd3NDh6A2y9Dm6bCzXO057-RjSKbT8")
         df_transaksi = pd.read_csv(io.BytesIO(req_trans.execute()))
