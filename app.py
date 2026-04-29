@@ -93,39 +93,46 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. FUNGSI LOAD DATA & PREPROCESSING
+# 2. FUNGSI LOAD DATA & PREPROCESSING (Sumber: CSV Lokal)
 # ==========================================
-@st.cache_data(ttl=3600, show_spinner="📊 Mengunduh & Memproses Data Market...")
+import os
+
+@st.cache_data(ttl=3600, show_spinner="📊 Memproses Data Market & KSEI...")
 def load_and_preprocess_data():
     try:
-        gcp_service_account = st.secrets["gdrive_creds"]
-        credentials = service_account.Credentials.from_service_account_info(
-            gcp_service_account, scopes=['https://www.googleapis.com/auth/drive.readonly']
-        )
-        service = build('drive', 'v3', credentials=credentials)
+        # Path folder data
+        data_folder = "/content/drive/MyDrive/Data Storage"
         
-        # Load Transaksi
-        req_trans = service.files().get_media(fileId="1GvDd3NDh6A2y9Dm6bCzXO057-RjSKbT8")
-        df_transaksi = pd.read_csv(io.BytesIO(req_trans.execute()))
+        # File transaksi
+        file_transaksi = os.path.join(data_folder, "Kompilasi_Data_1Tahun_Backup.csv")
+        # File KSEI
+        file_ksei = os.path.join(data_folder, "Shareholder_1Persen_Processed.csv")
         
-        # Load Kepemilikan
-        req_ksei = service.files().get_media(fileId="1PTr6XmBp6on-RNyaHC4mWpn6Y3vsR8xr")
-        df_kepemilikan = pd.read_csv(io.BytesIO(req_ksei.execute()))
+        # ==========================================
+        # LOAD DATA TRANSAKSI
+        # ==========================================
+        if not os.path.exists(file_transaksi):
+            st.error(f"❌ File transaksi tidak ditemukan di: {file_transaksi}")
+            return pd.DataFrame(), pd.DataFrame()
+            
+        df_transaksi = pd.read_csv(file_transaksi)
+        st.info(f"✅ File transaksi loaded: {len(df_transaksi):,} rows")
         
-        # --- PREPROCESSING DIMASUKKAN KE DALAM CACHE ---
+        # --- PREPROCESSING TRANSAKSI ---
         # Konversi Tanggal
         df_transaksi['Last Trading Date'] = pd.to_datetime(df_transaksi['Last Trading Date'].astype(str), errors='coerce')
-        df_kepemilikan['Tanggal_Data'] = pd.to_datetime(df_kepemilikan['Tanggal_Data'].astype(str), errors='coerce')
-
         # Drop NA Penting
         df_transaksi = df_transaksi.dropna(subset=['Last Trading Date', 'Stock Code'])
-        df_kepemilikan = df_kepemilikan.dropna(subset=['Tanggal_Data', 'Kode Efek'])
 
-        # Konversi Numerik
+        # Konversi Numerik (semua kolom angka dari CSV baru)
         numeric_cols = ['Volume', 'Value', 'Foreign Buy', 'Foreign Sell', 'Net Foreign Flow', 
                         'Big_Player_Anomaly', 'Close', 'Volume Spike (x)', 'Avg_Order_Volume',
                         'Tradeble Shares', 'Free Float', 'Typical Price', 'TPxV', 'Frequency',
-                        'Previous', 'Open Price', 'High', 'Low', 'Change %']
+                        'Previous', 'Open Price', 'High', 'Low', 'Change %', 'Change',
+                        'Offer', 'Offer Volume', 'Bid', 'Bid Volume', 'Listed Shares',
+                        'Weight For Index', 'Non Regular Volume', 'Non Regular Value',
+                        'Non Regular Frequency', 'Bid/Offer Imbalance', 'MA50_AOVol',
+                        'VWMA_20D', 'MA20_vol', 'Signal', 'Final Signal']
 
         for col in numeric_cols:
             if col in df_transaksi.columns:
@@ -134,24 +141,19 @@ def load_and_preprocess_data():
         # ====================================================
         # 🛠️ KOREKSI DATA ASING (UBAH LEMBAR JADI RUPIAH)
         # ====================================================
-        # 1. Hitung harga rata-rata transaksi harian (VWAP)
         df_transaksi['Daily_VWAP'] = np.where(
             df_transaksi['Volume'] > 0, 
             df_transaksi['Value'] / df_transaksi['Volume'], 
-            df_transaksi['Close'] # Fallback pakai harga close jika volume 0
+            df_transaksi['Close']
         )
         
-        # 2. Simpan data aslinya (lembar) buat jaga-jaga
         if 'Net Foreign Flow' in df_transaksi.columns:
             df_transaksi['Net_Foreign_Volume'] = df_transaksi['Net Foreign Flow']
-            
-            # 3. Ubah kolom menjadi nominal Rupiah
             df_transaksi['Net Foreign Flow'] = df_transaksi['Net Foreign Flow'] * df_transaksi['Daily_VWAP']
             df_transaksi['Foreign Buy'] = df_transaksi['Foreign Buy'] * df_transaksi['Daily_VWAP']
             df_transaksi['Foreign Sell'] = df_transaksi['Foreign Sell'] * df_transaksi['Daily_VWAP']
-        # ====================================================
 
-        # Hitung AOVol (Average Order Volume) moving average
+        # Hitung AOVol MA & Ratio
         df_transaksi = df_transaksi.sort_values(['Stock Code', 'Last Trading Date'])
         df_transaksi['AOVol_MA20'] = df_transaksi.groupby('Stock Code')['Avg_Order_Volume'].transform(
             lambda x: x.rolling(20, min_periods=1).mean()
@@ -169,10 +171,58 @@ def load_and_preprocess_data():
         else:
             df_transaksi['Volume_Pct_Tradeble'] = 0
 
+        # ==========================================
+        # LOAD DATA KSEI (SHAREHOLDER 1%)
+        # ==========================================
+        df_kepemilikan = pd.DataFrame()
+        
+        if os.path.exists(file_ksei):
+            df_ksei_raw = pd.read_csv(file_ksei)
+            st.info(f"✅ File KSEI loaded: {len(df_ksei_raw):,} rows")
+            
+            # Mapping kolom dari Shareholder_1Persen_Processed.csv ke format yang digunakan script
+            # Kolom asli: ['Data Source', 'DATE', 'SHARE_CODE', 'ISSUER_NAME', 'INVESTOR_NAME', 
+            #              'INVESTOR_TYPE', 'LOCAL_FOREIGN', 'NATIONALITY', 'DOMICILE', 
+            #              'HOLDINGS_SCRIPLESS', 'HOLDINGS_SCRIP', 'TOTAL_HOLDING_SHARES', 
+            #              'PERCENTAGE', 'Sector', 'Free Float']
+            
+            df_kepemilikan = pd.DataFrame()
+            df_kepemilikan['Tanggal_Data'] = pd.to_datetime(df_ksei_raw['DATE'], errors='coerce')
+            df_kepemilikan['Kode Efek'] = df_ksei_raw['SHARE_CODE'].astype(str).str.strip()
+            df_kepemilikan['Nama Pemegang Saham'] = df_ksei_raw['INVESTOR_NAME'].astype(str)
+            
+            # Buat Kode Broker dari gabungan INVESTOR_TYPE + NATIONALITY sebagai identifier
+            # Karena data tidak punya kode broker eksplisit
+            df_kepemilikan['Kode Broker'] = (
+                df_ksei_raw['INVESTOR_TYPE'].fillna('UNKNOWN') + ' - ' + 
+                df_ksei_raw['LOCAL_FOREIGN'].fillna('UNKNOWN')
+            )
+            
+            # Jumlah Saham (gunakan TOTAL_HOLDING_SHARES sebagai curr)
+            df_kepemilikan['Jumlah Saham (Curr)'] = pd.to_numeric(
+                df_ksei_raw['TOTAL_HOLDING_SHARES'], errors='coerce'
+            ).fillna(0)
+            
+            # Tambahan: simpan persentase kepemilikan
+            df_kepemilikan['Persentase'] = pd.to_numeric(
+                df_ksei_raw['PERCENTAGE'], errors='coerce'
+            ).fillna(0)
+            
+            # Bersihkan NA
+            df_kepemilikan = df_kepemilikan.dropna(subset=['Tanggal_Data', 'Kode Efek', 'Jumlah Saham (Curr)'])
+            
+            # Buang data yang jumlah sahamnya 0
+            df_kepemilikan = df_kepemilikan[df_kepemilikan['Jumlah Saham (Curr)'] > 0]
+            
+        else:
+            st.warning(f"⚠️ File KSEI tidak ditemukan di: {file_ksei}. Tab KSEI akan dinonaktifkan.")
+
         return df_transaksi, df_kepemilikan
         
     except Exception as e:
         st.error(f"Error loading data: {e}")
+        import traceback
+        st.error(traceback.format_exc())
         return pd.DataFrame(), pd.DataFrame()
 
 # Panggil fungsi yang sudah di-cache
@@ -181,11 +231,18 @@ df_transaksi, df_kepemilikan = load_and_preprocess_data()
 if df_transaksi.empty: 
     st.stop()
 
+# Flag untuk cek apakah data KSEI tersedia
+HAS_KSEI_DATA = not df_kepemilikan.empty
+
 unique_stocks = sorted(df_transaksi['Stock Code'].unique())
 max_date = df_transaksi['Last Trading Date'].max().date()
 default_start = max_date - timedelta(days=30)
 
-st.success(f"✅ Data siap: {len(df_transaksi):,} transaksi, {len(unique_stocks)} saham")
+if HAS_KSEI_DATA:
+    st.success(f"✅ Data siap: {len(df_transaksi):,} transaksi, {len(unique_stocks)} saham, {len(df_kepemilikan):,} data KSEI")
+else:
+    st.success(f"✅ Data siap: {len(df_transaksi):,} transaksi, {len(unique_stocks)} saham")
+    st.warning("⚠️ Data KSEI tidak tersedia (Tab KSEI akan menampilkan informasi terbatas)")
 
 
 # ==========================================
@@ -853,7 +910,9 @@ with tabs[1]:
         
         # ✅ OPTIMASI 2: LAZY LOAD EXPANDER DENGAN CACHED FUNCTIONS
         with st.expander("🔄 Klik untuk lihat Analisis Kepemilikan KSEI (Institusi Lokal vs Asing)", expanded=False):
-            if len(df_kepemilikan) > 0 and 'Kode Efek' in df_kepemilikan.columns:
+            if not HAS_KSEI_DATA:
+                st.warning("⚠️ Data KSEI tidak tersedia. File `Shareholder_1Persen_Processed.csv` tidak ditemukan atau kosong.")
+            elif len(df_kepemilikan) > 0 and 'Kode Efek' in df_kepemilikan.columns:
                 
                 # Mengambil data KSEI Pivot dari CACHE dengan parameter dinamis
                 ksei_pivot = get_cached_ksei_timeline(selected_stock, interval, chart_len, max_date, period_map, df_kepemilikan)
@@ -940,12 +999,31 @@ with tabs[1]:
                 st.warning("Data KSEI 5% tidak tersedia")
 
 
+
 # ==================== TAB 3: KSEI SCREENER & BROKER RADAR ====================
 with tabs[2]:
     st.markdown("### 🏦 KSEI Master: Stock Screener & Broker Radar")
-    st.markdown("Melacak perpindahan barang **riil** antar institusi/broker berdasarkan data kepemilikan KSEI 5%.")
     
-    if len(df_kepemilikan) > 0 and 'Kode Broker' in df_kepemilikan.columns:
+    if not HAS_KSEI_DATA:
+        st.warning("""
+        ⚠️ **Data KSEI Tidak Tersedia**
+        
+        File `Shareholder_1Persen_Processed.csv` tidak ditemukan di folder `MyDrive/Data Storage/`.
+        
+        **Required columns in CSV:**
+        - `DATE` → Tanggal data
+        - `SHARE_CODE` → Kode saham (e.g., BBCA)
+        - `INVESTOR_NAME` → Nama pemegang saham
+        - `INVESTOR_TYPE` → Tipe investor
+        - `LOCAL_FOREIGN` → Lokal atau Asing
+        - `TOTAL_HOLDING_SHARES` → Jumlah lembar saham
+        - `PERCENTAGE` → Persentase kepemilikan
+        
+        Pastikan file tersedia untuk mengaktifkan fitur ini.
+        """)
+    elif len(df_kepemilikan) > 0 and 'Kode Broker' in df_kepemilikan.columns:
+        st.markdown("Melacak perpindahan barang **riil** antar institusi/broker berdasarkan data kepemilikan KSEI ≥1%.")
+
         with st.container():
             st.markdown('<div class="filter-container">', unsafe_allow_html=True)
             col_b1, col_b2, col_b3, col_b4 = st.columns(4)
