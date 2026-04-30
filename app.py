@@ -198,7 +198,7 @@ def load_and_preprocess_data():
                 df_transaksi[col] = pd.to_numeric(df_transaksi[col], errors='coerce').fillna(0)
 
         # ====================================================
-        # 🛠️ KOREKSI DATA ASING (UBAH LEMBAR JADI RUPIAH)
+        # 🛠️ KOREKSI DATA ASING - VERSI FINAL (CSV SUDAH PUNYA VALUE)
         # ====================================================
         df_transaksi['Daily_VWAP'] = np.where(
             df_transaksi['Volume'] > 0, 
@@ -206,11 +206,41 @@ def load_and_preprocess_data():
             df_transaksi['Close']
         )
         
+        # Karena CSV sudah punya kolom nilai dalam Rupiah:
+        # - Foreign_Buy_Value  → Nilai Foreign Buy dalam Rupiah
+        # - Foreign_Sell_Value → Nilai Foreign Sell dalam Rupiah
+        # - Net_Foreign_Value  → Net Foreign Flow dalam Rupiah
+        # Kita gunakan langsung kolom-kolom ini, TANPA konversi ulang
+        
+        # Backup nilai lembar asli (jika dibutuhkan nanti)
+        if 'Foreign Buy' in df_transaksi.columns:
+            df_transaksi['Foreign_Buy_Volume'] = df_transaksi['Foreign Buy'].copy()
+        
+        if 'Foreign Sell' in df_transaksi.columns:
+            df_transaksi['Foreign_Sell_Volume'] = df_transaksi['Foreign Sell'].copy()
+        
         if 'Net Foreign Flow' in df_transaksi.columns:
-            df_transaksi['Net_Foreign_Volume'] = df_transaksi['Net Foreign Flow']
-            df_transaksi['Net Foreign Flow'] = df_transaksi['Net Foreign Flow'] * df_transaksi['Daily_VWAP']
-            df_transaksi['Foreign Buy'] = df_transaksi['Foreign Buy'] * df_transaksi['Daily_VWAP']
-            df_transaksi['Foreign Sell'] = df_transaksi['Foreign Sell'] * df_transaksi['Daily_VWAP']
+            df_transaksi['Net_Foreign_Volume'] = df_transaksi['Net Foreign Flow'].copy()
+        
+        # GANTI: Gunakan kolom Value (Rupiah) sebagai kolom utama
+        # Script lain di dashboard merujuk ke 'Foreign Buy', 'Foreign Sell', 'Net Foreign Flow' → harus dalam Rupiah
+        if 'Foreign_Buy_Value' in df_transaksi.columns:
+            df_transaksi['Foreign Buy'] = df_transaksi['Foreign_Buy_Value']
+            st.success("✅ Foreign Buy → Menggunakan nilai Rupiah dari Foreign_Buy_Value")
+        else:
+            st.warning("⚠️ Foreign_Buy_Value tidak ditemukan, Foreign Buy tetap dalam lembar")
+        
+        if 'Foreign_Sell_Value' in df_transaksi.columns:
+            df_transaksi['Foreign Sell'] = df_transaksi['Foreign_Sell_Value']
+            st.success("✅ Foreign Sell → Menggunakan nilai Rupiah dari Foreign_Sell_Value")
+        else:
+            st.warning("⚠️ Foreign_Sell_Value tidak ditemukan, Foreign Sell tetap dalam lembar")
+        
+        if 'Net_Foreign_Value' in df_transaksi.columns:
+            df_transaksi['Net Foreign Flow'] = df_transaksi['Net_Foreign_Value']
+            st.success("✅ Net Foreign Flow → Menggunakan nilai Rupiah dari Net_Foreign_Value")
+        else:
+            st.warning("⚠️ Net_Foreign_Value tidak ditemukan, Net Foreign Flow tetap dalam lembar")
 
         # Hitung AOVol (Average Order Volume) moving average
         df_transaksi = df_transaksi.sort_values(['Stock Code', 'Last Trading Date'])
