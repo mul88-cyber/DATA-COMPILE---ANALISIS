@@ -108,7 +108,7 @@ def load_and_preprocess_data():
         # LOAD DATA TRANSAKSI
         # ==========================================
         # 🔑 GANTI FILE ID INI dengan ID file Kompilasi_Data_1Tahun_Backup.csv di Google Drive Anda
-        TRANSACTION_FILE_ID = "1fHq6wehVvK-sLTJfGYC-rrgczEh2tpzr"  # ← GANTI INI, Pak!
+        TRANSACTION_FILE_ID = "1t_wCljhepGBqZVrvleuZKldomQKop9DY"  # ← GANTI INI, Pak!
         
         try:
             req_trans = service.files().get_media(fileId=TRANSACTION_FILE_ID)
